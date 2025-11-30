@@ -127,6 +127,11 @@ SYSTEM_OVERHEAD_MANUAL=35000
 3. Compare with your status line
 4. If they differ, set `SYSTEM_OVERHEAD_MANUAL` to fine-tune (adjust by ±5-10k)
 
+**After `/clear` command:**
+- Status line shows system overhead as minimum (instead of 0k)
+- This matches `/context` behavior which always includes system overhead
+- As soon as you send a new message, the count updates to include conversation tokens
+
 ### Customization
 
 You can modify the script to customize:

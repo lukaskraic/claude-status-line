@@ -138,6 +138,12 @@ fi
 tokens=${tokens:-0}
 [[ "$tokens" == "null" || -z "$tokens" ]] && tokens=0
 
+# If we still have 0 tokens (e.g., after /clear), use system overhead as minimum
+# This matches /context behavior which always includes system overhead
+if [[ "$tokens" == "0" ]]; then
+    tokens=$SYSTEM_OVERHEAD
+fi
+
 budget=${budget:-200000}
 [[ "$budget" == "null" || -z "$budget" ]] && budget=200000
 

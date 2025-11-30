@@ -25,13 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README documentation updated with auto-detection details and calibration guide
 - Customization section updated to reference new detection mechanism
 
+### Fixed
+- After `/clear` command, status line now shows system overhead as minimum instead of 0k
+- This matches `/context` behavior which always includes system overhead
+- Provides more accurate representation of actual context usage
+
 ### Technical Details
 - Auto-detection correctly handles disabled MCP servers
 - Excludes servers with `"disabled": true` from count
 - Falls back to safe defaults if jq parsing fails or settings missing
 - Maintains backward compatibility with manual override option
+- When no conversation data exists (after `/clear`), displays system overhead as baseline
 
-**Why**: Eliminates need for users to manually configure system overhead. The script now automatically adapts to your MCP setup, providing accurate token counts out of the box while still allowing manual fine-tuning when needed.
+**Why**: Eliminates need for users to manually configure system overhead. The script now automatically adapts to your MCP setup, providing accurate token counts out of the box while still allowing manual fine-tuning when needed. The `/clear` fix ensures the status line always shows a realistic minimum token count.
 
 ## [1.1.0] - 2024-11-29
 

@@ -6,9 +6,9 @@ Beautiful, informative status line for Claude Code with per-window token trackin
 
 - ✅ **Per-Window Token Tracking**: Each Claude Code window maintains its own independent token counter
 - ✅ **Visual Indicators**:
-  - ✓ Safe (<50% usage)
-  - ⚠ Warning (50-80% usage)
-  - ⚠⚠ Critical (>80% usage)
+  - ✓ Safe (0-74% usage)
+  - ⚠ Warning (75-89% usage)
+  - ⚠⚠ Critical (90-100% usage, auto-compact imminent)
 - ✅ **Intelligent Fallbacks**: Automatically tries JSON → transcript → cache for maximum reliability
 - ✅ **Git Integration**: Shows current branch when in a git repository
 - ✅ **Compact Display**: Human-readable format (45k instead of 45000)
@@ -83,9 +83,9 @@ The status indicator helps you quickly assess context usage:
 
 | Indicator | Usage | Meaning |
 |-----------|-------|---------|
-| ✓ | <50% | Safe - plenty of context remaining |
-| ⚠ | 50-80% | Warning - approaching limit |
-| ⚠⚠ | >80% | Critical - near context limit |
+| ✓ | 0-74% | Safe - plenty of context remaining |
+| ⚠ | 75-89% | Warning - approaching auto-compact |
+| ⚠⚠ | 90-100% | Critical - auto-compact imminent (~92%) |
 
 ## Configuration
 
@@ -96,13 +96,45 @@ The script automatically detects and displays:
 - **Model name**: The Claude model you're currently using
 - **Token usage**: Current usage / budget limit (percentage)
 
+### System Overhead
+
+The script automatically detects system overhead based on your MCP configuration in `~/.claude/settings.json`.
+
+**Auto-detection** (default):
+- Reads `~/.claude/settings.json` and counts enabled MCP servers
+- Estimates overhead based on server count:
+  - **0 servers**: 24k (base: system prompt + tools + agents + memory)
+  - **1-2 servers**: 34k (base + minimal MCP overhead)
+  - **3-4 servers**: 54k (base + moderate MCP overhead)
+  - **5-6 servers**: 74k (base + high MCP overhead)
+  - **7+ servers**: 104k (base + maximum MCP overhead)
+- Handles disabled servers correctly (excludes them from count)
+- Graceful fallbacks if settings file is missing or malformed
+
+**Manual override** (optional):
+
+If auto-detection doesn't match your `/context` output, you can manually override:
+
+```bash
+# Edit ~/.claude/statusline-with-tokens.sh
+# Uncomment and set your custom value:
+SYSTEM_OVERHEAD_MANUAL=35000
+```
+
+**How to calibrate:**
+1. Run `/context` in Claude Code
+2. Note the total tokens shown (e.g., "162k/200k")
+3. Compare with your status line
+4. If they differ, set `SYSTEM_OVERHEAD_MANUAL` to fine-tune (adjust by ±5-10k)
+
 ### Customization
 
 You can modify the script to customize:
 
-- Threshold percentages for visual indicators (lines 88-96)
-- Display format (line 103)
-- Token formatting (lines 84-99)
+- System overhead detection (see `detect_mcp_servers()` function or use `SYSTEM_OVERHEAD_MANUAL`)
+- Threshold percentages for visual indicators
+- Display format
+- Token formatting
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
 

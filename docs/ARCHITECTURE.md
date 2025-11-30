@@ -229,20 +229,23 @@ percentage=$(awk "BEGIN {printf \"%.0f\", ($tokens / $budget) * 100}")
 
 ### Visual Indicators
 
+Thresholds aligned with Claude Code auto-compact (~92%):
+
 ```bash
-if [[ $percentage -lt 50 ]]; then
+if [[ $percentage -lt 75 ]]; then
     status="✓"          # Safe
-elif [[ $percentage -lt 80 ]]; then
+elif [[ $percentage -lt 90 ]]; then
     status="⚠"          # Warning
 else
     status="⚠⚠"         # Critical
 fi
 ```
 
-Thresholds:
-- **<50%**: ✓ Safe (plenty of context remaining)
-- **50-80%**: ⚠ Warning (approaching limit)
-- **>80%**: ⚠⚠ Critical (near context limit)
+| Indicator | Range | Meaning |
+|-----------|-------|---------|
+| ✓ | <75% | Safe (plenty of context) |
+| ⚠ | 75-90% | Warning (approaching auto-compact) |
+| ⚠⚠ | >90% | Critical (auto-compact imminent) |
 
 ### Final Output
 

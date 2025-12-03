@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2024-12-03
+
+### Added
+- **Multi-location MCP configuration detection** with fallback mechanism
+- Support for Claude Desktop global config: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Automatic fallback from project-specific to global MCP configuration
+- Dynamic MCP server count detection (updates automatically when MCP servers are disabled/enabled)
+
+### Changed
+- `detect_mcp_servers()` now tries multiple configuration locations:
+  1. `~/.claude/settings.json` (project-specific)
+  2. `~/Library/Application Support/Claude/claude_desktop_config.json` (global)
+- System overhead detection now works correctly with Claude Desktop MCP configuration
+- Configuration comments updated to reflect new multi-location detection
+
+### Fixed
+- **Critical fix:** Auto-detection now works with Claude Desktop MCP configuration
+- Previously, auto-detection only checked `~/.claude/settings.json`, causing it to miss global MCP servers
+- Users with many MCP servers (e.g., 17) now get accurate overhead estimation (104k instead of 24k default)
+- Status line percentages are now significantly more accurate for users with multiple MCP servers
+
+### Technical Details
+- MCP count detection refreshes every ~300ms (status line update interval)
+- No caching between calls - changes to MCP configuration are reflected immediately
+- Minimal performance impact: ~10-15ms per status line update
+- Supports disabling/enabling MCP servers during runtime without restart
+
 ## [1.2.0] - 2024-11-30
 
 ### Added

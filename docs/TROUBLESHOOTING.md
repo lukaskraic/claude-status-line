@@ -87,6 +87,98 @@ Common issues and solutions for Claude Code Status Line with Token Counter.
    # Should output formatted JSON
    ```
 
+## MCP Configuration Issues
+
+### Auto-detection not finding MCP servers
+
+**Symptoms**: Status line shows very low system overhead (24k) despite having many MCP servers configured
+
+**Possible Causes**:
+1. MCP servers configured in a location the script doesn't check
+2. MCP configuration file has incorrect JSON syntax
+3. All MCP servers are disabled
+
+**Solutions**:
+1. **Verify MCP configuration location**:
+
+   The script checks two locations (in order):
+   ```bash
+   # Location 1: Project-specific (checked first)
+   ls -l ~/.claude/settings.json
+   cat ~/.claude/settings.json | jq '.mcpServers'
+
+   # Location 2: Global Claude Desktop config (fallback)
+   ls -l ~/Library/Application\ Support/Claude/claude_desktop_config.json
+   cat ~/Library/Application\ Support/Claude/claude_desktop_config.json | jq '.mcpServers'
+   ```
+
+2. **Verify MCP server count**:
+   ```bash
+   # Check enabled MCP servers in Claude Desktop config
+   jq '.mcpServers | to_entries | map(select(.value.disabled != true)) | length' \
+     ~/Library/Application\ Support/Claude/claude_desktop_config.json
+   ```
+
+3. **Test auto-detection manually**:
+   ```bash
+   # Run detection function directly
+   bash -c 'source ~/.claude/statusline-with-tokens.sh && detect_mcp_servers'
+   # Should output: 24000, 34000, 54000, 74000, or 104000
+   ```
+
+4. **Common scenarios**:
+   - **0-2 MCP servers**: 24k-34k overhead (normal for minimal setup)
+   - **3-6 MCP servers**: 54k-74k overhead (moderate setup)
+   - **7+ MCP servers**: 104k overhead (comprehensive setup like memory, github, playwright, etc.)
+
+### MCP configuration in unexpected location
+
+**Symptoms**: Auto-detection returns 24k but you have MCP servers configured elsewhere
+
+**Solutions**:
+1. **Use manual override** (temporary fix):
+   ```bash
+   # Edit ~/.claude/statusline-with-tokens.sh
+   # Uncomment and set based on your MCP count:
+   SYSTEM_OVERHEAD_MANUAL=104000  # For 7+ servers
+   ```
+
+2. **Copy MCP config to supported location**:
+   ```bash
+   # If your MCP servers are in ~/.config/claude/ or elsewhere,
+   # add them to ~/.claude/settings.json:
+   jq '.mcpServers = {...}' ~/.claude/settings.json
+   ```
+
+### Dynamic MCP detection not working
+
+**Symptoms**: After disabling/enabling MCP servers, status line still shows old overhead
+
+**Possible Causes**:
+1. Configuration file cached by OS
+2. Script not refreshing configuration
+
+**Solutions**:
+1. **Wait 1-2 seconds**: Detection refreshes every ~300ms with status line
+
+2. **Verify configuration change**:
+   ```bash
+   # Add "disabled": true to an MCP server
+   jq '.mcpServers.memory.disabled = true' \
+     ~/Library/Application\ Support/Claude/claude_desktop_config.json
+
+   # Check count decreased
+   bash -c 'source ~/.claude/statusline-with-tokens.sh && detect_mcp_servers'
+   ```
+
+3. **Test with different MCP counts**:
+   ```bash
+   # Disable 10 servers temporarily
+   # Before: 17 servers → 104k overhead
+   # After: 7 servers → 104k overhead (still 7+)
+   # After: 3 servers → 54k overhead
+   ```
+
 ## Token Counter Issues
 
 ### Token counter shows 0

@@ -9,7 +9,9 @@
 #   - Memory files: ~3.3k
 #
 # Auto-detection (default):
-#   Reads ~/.claude/settings.json and counts enabled MCP servers
+#   Reads MCP configuration from multiple locations (fallback order):
+#   1. ~/.claude/settings.json (project-specific)
+#   2. ~/Library/Application Support/Claude/claude_desktop_config.json (global)
 #   Estimates overhead: 24k-104k based on MCP count
 #
 # Manual override (optional):
@@ -20,25 +22,34 @@
 
 # Function to detect system overhead based on MCP server count
 detect_mcp_servers() {
+    # Try multiple configuration locations (fallback order)
     local settings_file="$HOME/.claude/settings.json"
+    local desktop_config="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+    local mcp_count=0
 
-    # Default if settings file doesn't exist
-    if [[ ! -f "$settings_file" ]]; then
-        echo "25000"
-        return
+    # Try reading from ~/.claude/settings.json first
+    if [[ -f "$settings_file" ]]; then
+        mcp_count=$(jq '
+            .mcpServers // {} |
+            to_entries |
+            map(select(.value.disabled != true)) |
+            length
+        ' "$settings_file" 2>/dev/null)
     fi
 
-    # Count enabled MCP servers (those without "disabled": true)
-    local mcp_count=$(jq '
-        .mcpServers // {} |
-        to_entries |
-        map(select(.value.disabled != true)) |
-        length
-    ' "$settings_file" 2>/dev/null)
+    # If no MCP servers found or file doesn't exist, try Claude Desktop config
+    if [[ -z "$mcp_count" || "$mcp_count" == "null" || "$mcp_count" == "0" ]] && [[ -f "$desktop_config" ]]; then
+        mcp_count=$(jq '
+            .mcpServers // {} |
+            to_entries |
+            map(select(.value.disabled != true)) |
+            length
+        ' "$desktop_config" 2>/dev/null)
+    fi
 
-    # Fallback if jq fails or returns null
+    # Final fallback if both failed
     if [[ -z "$mcp_count" || "$mcp_count" == "null" ]]; then
-        echo "30000"
+        echo "25000"
         return
     fi
 

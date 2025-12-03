@@ -98,18 +98,21 @@ The script automatically detects and displays:
 
 ### System Overhead
 
-The script automatically detects system overhead based on your MCP configuration in `~/.claude/settings.json`.
+The script automatically detects system overhead based on your MCP configuration using a multi-location fallback mechanism.
 
 **Auto-detection** (default):
-- Reads `~/.claude/settings.json` and counts enabled MCP servers
-- Estimates overhead based on server count:
+- Reads MCP configuration from multiple locations (in order):
+  1. `~/.claude/settings.json` (project-specific)
+  2. `~/Library/Application Support/Claude/claude_desktop_config.json` (global)
+- Estimates overhead based on **enabled** MCP server count:
   - **0 servers**: 24k (base: system prompt + tools + agents + memory)
   - **1-2 servers**: 34k (base + minimal MCP overhead)
   - **3-4 servers**: 54k (base + moderate MCP overhead)
   - **5-6 servers**: 74k (base + high MCP overhead)
   - **7+ servers**: 104k (base + maximum MCP overhead)
 - Handles disabled servers correctly (excludes them from count)
-- Graceful fallbacks if settings file is missing or malformed
+- Graceful fallbacks if both config files are missing or malformed
+- **Dynamic detection**: Updates automatically when MCP servers are disabled/enabled (no restart needed)
 
 **Manual override** (optional):
 

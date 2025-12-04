@@ -10,8 +10,9 @@
 #
 # Auto-detection (default):
 #   Reads MCP configuration from multiple locations (fallback order):
-#   1. ~/.claude/settings.json (project-specific)
-#   2. ~/Library/Application Support/Claude/claude_desktop_config.json (global)
+#   1. ~/.claude.json (Claude Code CLI config - most common)
+#   2. ~/.claude/settings.json (project-specific)
+#   3. ~/Library/Application Support/Claude/claude_desktop_config.json (Claude Desktop)
 #   Estimates overhead: 24k-104k based on MCP count
 #
 # Manual override (optional):
@@ -20,15 +21,32 @@
 #
 # SYSTEM_OVERHEAD_MANUAL=
 
+# Autocompact buffer - Claude Code 2.0+ ALWAYS reserves 45k tokens (22.5%)
+# This is a constant that persists across sessions and even after /clear
+# The buffer is NOT included in transcript cache metrics, so we must add it
+# Reference: https://github.com/anthropics/claude-code/issues/10266
+AUTOCOMPACT_BUFFER=45000
+
 # Function to detect system overhead based on MCP server count
 detect_mcp_servers() {
     # Try multiple configuration locations (fallback order)
+    local claude_json="$HOME/.claude.json"
     local settings_file="$HOME/.claude/settings.json"
     local desktop_config="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-    local mcp_count=0
+    local mcp_count=""
 
-    # Try reading from ~/.claude/settings.json first
-    if [[ -f "$settings_file" ]]; then
+    # Try reading from ~/.claude.json first (Claude Code CLI config)
+    if [[ -f "$claude_json" ]]; then
+        mcp_count=$(jq '
+            .mcpServers // {} |
+            to_entries |
+            map(select(.value.disabled != true)) |
+            length
+        ' "$claude_json" 2>/dev/null)
+    fi
+
+    # If no MCP servers found, try ~/.claude/settings.json
+    if [[ -z "$mcp_count" || "$mcp_count" == "null" || "$mcp_count" == "0" ]] && [[ -f "$settings_file" ]]; then
         mcp_count=$(jq '
             .mcpServers // {} |
             to_entries |
@@ -37,7 +55,7 @@ detect_mcp_servers() {
         ' "$settings_file" 2>/dev/null)
     fi
 
-    # If no MCP servers found or file doesn't exist, try Claude Desktop config
+    # If still no MCP servers found, try Claude Desktop config
     if [[ -z "$mcp_count" || "$mcp_count" == "null" || "$mcp_count" == "0" ]] && [[ -f "$desktop_config" ]]; then
         mcp_count=$(jq '
             .mcpServers // {} |
@@ -47,7 +65,7 @@ detect_mcp_servers() {
         ' "$desktop_config" 2>/dev/null)
     fi
 
-    # Final fallback if both failed
+    # Final fallback if all failed
     if [[ -z "$mcp_count" || "$mcp_count" == "null" ]]; then
         echo "25000"
         return
@@ -73,6 +91,9 @@ fi
 
 # Read JSON input from stdin
 input=$(cat)
+
+# DEBUG: Save input to file for inspection (temporary)
+echo "$input" > "$HOME/.claude/statusline-debug.json" 2>/dev/null
 
 # Extract session_id for per-window cache isolation
 session_id=$(echo "$input" | jq -r '.session_id // "default"' 2>/dev/null)
@@ -105,14 +126,16 @@ if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then
     transcript=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null)
 
     if [[ -f "$transcript" ]]; then
-        # Get last assistant message's token usage (best approximation of current total)
-        # Formula: cache_read + cache_creation + input + output + system overhead
-        tokens=$(tail -1 "$transcript" | jq -r 'select(.message.usage != null) | .message.usage | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.input_tokens // 0) + (.output_tokens // 0))' 2>/dev/null)
+        # Get token usage from transcript
+        # Formula: cache_read + cache_creation + autocompact_buffer
+        # - cache_read = cached context from previous API calls
+        # - cache_creation = new content being cached this turn
+        # - autocompact_buffer = Claude Code 2.0+ constant 45k reservation
+        tokens=$(tail -1 "$transcript" | jq -r 'select(.message.usage != null) | .message.usage | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))' 2>/dev/null)
 
-        # Add system overhead (system prompt + tools + agents + memory)
-        # /context includes system components not in transcript
+        # Add autocompact buffer to match /context output
         if [[ -n "$tokens" && "$tokens" != "0" && "$tokens" != "null" ]]; then
-            tokens=$((tokens + SYSTEM_OVERHEAD))
+            tokens=$((tokens + AUTOCOMPACT_BUFFER))
         fi
     fi
 
@@ -125,11 +148,11 @@ if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then
         if [[ -d "$transcript_dir" ]]; then
             for latest_transcript in $(ls -t "$transcript_dir"/*.jsonl 2>/dev/null | grep -v 'agent-' | head -5); do
                 if [[ -f "$latest_transcript" && -s "$latest_transcript" ]]; then
-                    tokens=$(tail -1 "$latest_transcript" | jq -r 'select(.message.usage != null) | .message.usage | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.input_tokens // 0) + (.output_tokens // 0))' 2>/dev/null)
+                    tokens=$(tail -1 "$latest_transcript" | jq -r 'select(.message.usage != null) | .message.usage | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))' 2>/dev/null)
 
                     if [[ -n "$tokens" && "$tokens" != "0" && "$tokens" != "null" ]]; then
-                        # Add system overhead
-                        tokens=$((tokens + SYSTEM_OVERHEAD))
+                        # Add autocompact buffer
+                        tokens=$((tokens + AUTOCOMPACT_BUFFER))
                         break
                     fi
                 fi
@@ -149,10 +172,10 @@ fi
 tokens=${tokens:-0}
 [[ "$tokens" == "null" || -z "$tokens" ]] && tokens=0
 
-# If we still have 0 tokens (e.g., after /clear), use system overhead as minimum
-# This matches /context behavior which always includes system overhead
+# If we still have 0 tokens (e.g., after /clear), use system overhead + autocompact buffer
+# This matches /context behavior: system components + autocompact buffer (45k)
 if [[ "$tokens" == "0" ]]; then
-    tokens=$SYSTEM_OVERHEAD
+    tokens=$((SYSTEM_OVERHEAD + AUTOCOMPACT_BUFFER))
 fi
 
 budget=${budget:-200000}

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2025-01-17
+
+### Added
+- **Native context_window support** for Claude Code 2.0.70+ and 2.1.6+
+- Direct use of `context_window.used_percentage` when available (most accurate)
+- Fallback chain: `used_percentage` → `current_usage.*` → `total_input_tokens` → transcript parsing
+- Support for `context_window.context_window_size` (effective context window)
+
+### Changed
+- Token calculation now uses Claude Code's native percentage calculation when available
+- Improved accuracy by using pre-calculated values from Claude Code
+- Updated overhead comments to document MCP Auto-Defer behavior (v2.1.7+)
+
+### Fixed
+- **Major fix**: Corrected JSON paths to use `context_window.*` instead of `context.*`
+- Better handling of effective context window (reserves space for max output tokens)
+
+### Technical Details
+- Claude Code 2.0.70+ provides `context_window.used_percentage` directly
+- Claude Code 2.1.6+ adds `used_percentage` and `remaining_percentage` fields
+- Claude Code 2.1.7+ introduced effective context window calculation (full window - max output tokens)
+- MCP tools are auto-deferred when exceeding 10% of context window (v2.1.7+)
+- Legacy fallback paths preserved for older Claude Code versions
+
+**Why**: The official Claude Code status line API now provides pre-calculated percentages that are more accurate than our transcript parsing. This update uses the native values when available while maintaining backward compatibility.
+
 ## [1.4.0] - 2024-12-04
 
 ### Fixed

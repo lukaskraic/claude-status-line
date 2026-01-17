@@ -8,6 +8,12 @@
 #   - Custom agents: ~443
 #   - Memory files: ~3.3k
 #
+# NOTE (Claude Code v2.1.7+): MCP Tool Auto-Defer
+#   When MCP tool descriptions exceed 10% of context window, they are
+#   automatically deferred via MCPSearch tool. This means our static
+#   overhead estimation may be higher than actual usage. The auto-defer
+#   threshold is configurable via "auto:N" syntax in disallowedTools.
+#
 # Auto-detection (default):
 #   Reads MCP configuration from multiple locations (fallback order):
 #   1. ~/.claude.json (Claude Code CLI config - most common)
@@ -25,6 +31,10 @@
 # This is a constant that persists across sessions and even after /clear
 # The buffer is NOT included in transcript cache metrics, so we must add it
 # Reference: https://github.com/anthropics/claude-code/issues/10266
+#
+# NOTE: When using context_window.used_percentage from Claude Code 2.0.70+,
+# this buffer is already included in the percentage calculation, so we only
+# add it when falling back to transcript parsing.
 AUTOCOMPACT_BUFFER=45000
 
 # Function to detect system overhead based on MCP server count
@@ -118,8 +128,41 @@ fi
 
 # Get token metrics from input JSON or transcript
 tokens_display=""
-tokens=$(echo "$input" | jq -r '.context.usage.total // 0' 2>/dev/null)
-budget=$(echo "$input" | jq -r '.context.budget.limit // 200000' 2>/dev/null)
+
+# Claude Code 2.0.70+ provides context_window data directly
+# Try the new fields first (most accurate)
+used_percentage=$(echo "$input" | jq -r '.context_window.used_percentage // null' 2>/dev/null)
+budget=$(echo "$input" | jq -r '.context_window.context_window_size // null' 2>/dev/null)
+
+# Get total tokens from context_window (v2.0.70+)
+if [[ "$used_percentage" != "null" && -n "$used_percentage" && "$budget" != "null" && -n "$budget" ]]; then
+    # Use pre-calculated values from Claude Code (most accurate)
+    tokens=$(awk "BEGIN {printf \"%.0f\", ($used_percentage / 100) * $budget}")
+else
+    # Fallback to current_usage fields (v2.0.70+)
+    tokens=$(echo "$input" | jq -r '
+        .context_window.current_usage // {} |
+        ((.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0))
+    ' 2>/dev/null)
+
+    # If current_usage is empty/null, try total_input_tokens
+    if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then
+        tokens=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0' 2>/dev/null)
+    fi
+
+    # Get budget from context_window_size or default
+    if [[ "$budget" == "null" || -z "$budget" ]]; then
+        budget=$(echo "$input" | jq -r '.context_window.context_window_size // 200000' 2>/dev/null)
+    fi
+fi
+
+# Legacy fallback: old API paths (for older Claude Code versions)
+if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then
+    tokens=$(echo "$input" | jq -r '.context.usage.total // 0' 2>/dev/null)
+fi
+if [[ "$budget" == "null" || -z "$budget" || "$budget" == "0" ]]; then
+    budget=$(echo "$input" | jq -r '.context.budget.limit // 200000' 2>/dev/null)
+fi
 
 # If tokens not in JSON, try parsing transcript file
 if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then

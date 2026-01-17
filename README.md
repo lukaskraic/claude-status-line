@@ -64,18 +64,19 @@ That's it! Your status line will now show token usage for each window independen
 
 The status line script:
 
-1. **Receives JSON input** from Claude Code with session metadata
-2. **Parses transcript file** to extract token usage (Claude Code API doesn't provide token counts)
-3. **Calculates accurate total**:
-   - Formula: `cache_read_tokens + cache_creation_tokens + autocompact_buffer (45k)`
-   - The autocompact buffer is a constant 45k tokens reserved by Claude Code 2.0+
-4. **Falls back intelligently**:
-   - Primary: Parse transcript file
-   - Secondary: Read from cache file
-5. **Uses per-window cache**: Each session gets `~/.claude/.token-cache-{session_id}`
-6. **Formats and displays**: directory, branch, model, tokens with visual indicators
+1. **Receives JSON input** from Claude Code with session metadata and context info
+2. **Uses native context_window data** (Claude Code 2.0.70+):
+   - `context_window.used_percentage` - pre-calculated percentage (most accurate)
+   - `context_window.context_window_size` - effective context window size
+   - `context_window.current_usage.*` - detailed token breakdown
+3. **Falls back intelligently** (for older versions or missing data):
+   - Primary: Native `context_window.*` fields (v2.0.70+)
+   - Secondary: Parse transcript file
+   - Tertiary: Read from session cache file
+4. **Uses per-window cache**: Each session gets `~/.claude/.token-cache-{session_id}`
+5. **Formats and displays**: directory, branch, model, tokens with visual indicators
 
-**Accuracy**: 99.2% match with `/context` output (typically within 1-2k tokens)
+**Accuracy**: Uses Claude Code's native percentage calculation when available (100% accurate), falls back to transcript parsing (99.2% accurate)
 
 ### Per-Window Isolation
 
@@ -104,6 +105,8 @@ The script automatically detects and displays:
 
 The script automatically detects system overhead based on your MCP configuration using a multi-location fallback mechanism.
 
+> **Note (Claude Code v2.0.70+)**: When native `context_window.used_percentage` is available, system overhead is already included in the percentage. The overhead detection below is only used when falling back to transcript parsing.
+
 **Auto-detection** (default):
 - Reads MCP configuration from multiple locations (in fallback order):
   1. `~/.claude.json` (Claude Code CLI config - most common)
@@ -118,6 +121,12 @@ The script automatically detects system overhead based on your MCP configuration
 - Handles disabled servers correctly (excludes them from count)
 - Graceful fallbacks if config files are missing or malformed
 - **Dynamic detection**: Updates automatically when MCP servers are disabled/enabled (no restart needed)
+
+**MCP Auto-Defer (Claude Code v2.1.7+)**:
+- When MCP tool descriptions exceed 10% of context window, they are automatically deferred
+- Deferred tools are discovered via `MCPSearch` instead of being loaded upfront
+- This means actual overhead may be lower than our static estimation
+- The threshold is configurable via `auto:N` syntax in `disallowedTools` setting
 
 **Autocompact Buffer**:
 - Claude Code 2.0+ reserves a constant **45k tokens (22.5%)** for autocompact operations

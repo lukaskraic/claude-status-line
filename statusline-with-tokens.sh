@@ -116,55 +116,53 @@ if cd "$cwd" 2>/dev/null && git rev-parse --git-dir > /dev/null 2>&1; then
     fi
 fi
 
-# Get token metrics from input JSON or transcript
+# Get token metrics - Priority: used_percentage > current_usage > transcript parsing
 tokens_display=""
-tokens=$(echo "$input" | jq -r '.context.usage.total // 0' 2>/dev/null)
-budget=$(echo "$input" | jq -r '.context.budget.limit // 200000' 2>/dev/null)
+budget=$(echo "$input" | jq -r '.context_window.context_window_size // 200000' 2>/dev/null)
+[[ "$budget" == "null" || -z "$budget" ]] && budget=200000
 
-# If tokens not in JSON, try parsing transcript file
-if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then
-    transcript=$(echo "$input" | jq -r '.transcript_path // ""' 2>/dev/null)
+# Source 1: used_percentage from Claude Code 2.1.6+ (official, most reliable)
+# Note: used_percentage already includes system overhead (cached system prompt, tools, MCP)
+# but excludes autocompact buffer (45k reserved space not in API metrics)
+used_pct=$(echo "$input" | jq -r '.context_window.used_percentage // null' 2>/dev/null)
 
-    if [[ -f "$transcript" ]]; then
-        # Get token usage from transcript
-        # Formula: cache_read + cache_creation + autocompact_buffer
-        # - cache_read = cached context from previous API calls
-        # - cache_creation = new content being cached this turn
-        # - autocompact_buffer = Claude Code 2.0+ constant 45k reservation
-        tokens=$(tail -1 "$transcript" | jq -r 'select(.message.usage != null) | .message.usage | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))' 2>/dev/null)
+if [[ "$used_pct" != "null" && -n "$used_pct" ]]; then
+    api_tokens=$(awk "BEGIN {printf \"%.0f\", ($used_pct / 100) * $budget}")
+    tokens=$((api_tokens + AUTOCOMPACT_BUFFER))
+    if [[ $tokens -gt $budget ]]; then
+        tokens=$budget
+    fi
+else
+    # Source 2: current_usage from Claude Code 2.0.70+
+    # cache_read includes cached system prompt, tools, MCP definitions
+    tokens=$(echo "$input" | jq -r '
+        .context_window.current_usage // {} |
+        ((.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0))
+    ' 2>/dev/null)
 
-        # Add autocompact buffer to match /context output
+    if [[ -n "$tokens" && "$tokens" != "0" && "$tokens" != "null" ]]; then
+        tokens=$((tokens + AUTOCOMPACT_BUFFER))
+        if [[ $tokens -gt $budget ]]; then
+            tokens=$budget
+        fi
+    else
+        tokens=0
+    fi
+
+    # Source 3: Transcript parsing (legacy, pre-2.0.70)
+    if [[ "$tokens" == "0" && -f "$transcript_path" ]]; then
+        tokens=$(tail -1 "$transcript_path" | jq -r 'select(.message.usage != null) | .message.usage | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))' 2>/dev/null)
         if [[ -n "$tokens" && "$tokens" != "0" && "$tokens" != "null" ]]; then
             tokens=$((tokens + AUTOCOMPACT_BUFFER))
+        else
+            tokens=0
         fi
     fi
 
-    # If still no tokens, try to find most recent transcript file with actual data
-    if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then
-        # Get directory where transcripts are stored based on current cwd
-        transcript_dir=$(dirname "$transcript" 2>/dev/null)
-
-        # Try to find tokens in transcript_dir first (if exists)
-        if [[ -d "$transcript_dir" ]]; then
-            for latest_transcript in $(ls -t "$transcript_dir"/*.jsonl 2>/dev/null | grep -v 'agent-' | head -5); do
-                if [[ -f "$latest_transcript" && -s "$latest_transcript" ]]; then
-                    tokens=$(tail -1 "$latest_transcript" | jq -r 'select(.message.usage != null) | .message.usage | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))' 2>/dev/null)
-
-                    if [[ -n "$tokens" && "$tokens" != "0" && "$tokens" != "null" ]]; then
-                        # Add autocompact buffer
-                        tokens=$((tokens + AUTOCOMPACT_BUFFER))
-                        break
-                    fi
-                fi
-            done
-        fi
-
-        # If still no tokens, load from cache file (fast, no file searching)
-        if [[ "$tokens" == "0" || "$tokens" == "null" || -z "$tokens" ]]; then
-            if [[ -f "$CACHE_FILE" ]]; then
-                tokens=$(cat "$CACHE_FILE" 2>/dev/null)
-            fi
-        fi
+    # Source 4: Cache file
+    if [[ "$tokens" == "0" && -f "$CACHE_FILE" ]]; then
+        tokens=$(cat "$CACHE_FILE" 2>/dev/null)
+        tokens=${tokens:-0}
     fi
 fi
 

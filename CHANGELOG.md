@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-02-20
+
+### Changed
+- **Token source rewrite**: Now uses official `context_window` API (Claude Code 2.1.6+)
+- Priority chain: `used_percentage` > `current_usage` > transcript parsing > cache
+- Removed fragile transcript directory scanning (~30 lines removed)
+- Kept single-file transcript parsing as legacy fallback for pre-2.0.70
+
+### Fixed
+- Removed dead code reading `.context.usage.total` (field never existed in API)
+- Token display no longer depends on transcript file format stability
+
+### Technical Details
+- `used_percentage` includes system overhead (cached in `cache_read_input_tokens`)
+- Only autocompact buffer (45k) is added on top (not included in API metrics)
+- System overhead auto-detection still used for zero-data fallback (after `/clear`)
+- Capped at budget to prevent >100% display
+
 ## [1.4.0] - 2024-12-04
 
 ### Fixed

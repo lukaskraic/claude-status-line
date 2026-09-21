@@ -123,20 +123,24 @@ The `x` permissions indicate the script is executable.
 ### 2. Test Script Manually
 
 ```bash
-echo '{"workspace":{"current_dir":"'$(pwd)'"},"model":{"display_name":"Test Model"},"context":{"usage":{"total":45000},"budget":{"limit":200000}},"session_id":"test"}' | ~/.claude/statusline-with-tokens.sh
+echo '{"workspace":{"current_dir":"'"$PWD"'"},"model":{"display_name":"Test Model"},"context_window":{"context_window_size":200000,"total_input_tokens":100000}}' \
+  | ~/.claude/statusline-with-tokens.sh
 ```
 
 Expected output:
 ```
-~/current/directory [Test Model] ✓ 45k/200k (22%)
+~/current/directory [Test Model] ✓ 100k/167k (60%)
 ```
+
+`167k` is the effective window: 200k minus the 33k auto-compact buffer. See
+[README](README.md#why-the-denominator-is-not-the-full-window).
 
 ### 3. Verify in Claude Code
 
 Start a new conversation in Claude Code and check the status line at the bottom of your terminal. You should see:
 
 ```
-~/your/directory (branch) [Model Name] ✓ XXk/200k (XX%)
+~/your/directory (branch) [Model Name] ✓ XXk/167k (XX%)
 ```
 
 ## Upgrading
@@ -180,9 +184,11 @@ To remove the custom status line and return to Claude Code defaults:
    rm ~/.claude/statusline-with-tokens.sh
    ```
 
-3. **Remove cache files** (optional):
+3. **Remove leftovers from v1.5.0 and earlier** (optional) — the script no
+   longer writes either of these:
    ```bash
-   rm ~/.claude/.token-cache-*
+   rm -f ~/.claude/.token-cache-*
+   rm -f ~/.claude/statusline-debug.json
    ```
 
 4. **Restart Claude Code**

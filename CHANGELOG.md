@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-09-21
+
+### Fixed
+- **Autocompact buffer was wrong and in the wrong place.** The constant was 45k;
+  measured on Claude Code 2.1.278 it is **33k**, fixed, on a 200k and a 1M window
+  alike. More importantly the buffer belongs in the denominator, not the
+  numerator: auto-compact fires at `context_window_size - buffer`, so usage is now
+  measured against that effective window instead of being inflated by 45k.
+- Percentage is capped at 100% instead of the token count being capped at the
+  window size, so the display degrades sensibly when usage briefly exceeds the
+  effective window before auto-compact runs.
+- Empty fields no longer shift every value after them. The single `jq` pass joins
+  on `\u001f`; it previously used `@tsv`, and tab is IFS whitespace, so bash
+  collapsed empty fields.
+- `git` is no longer invoked when `cwd` is empty or not a directory — a malformed
+  payload used to report the branch of whatever directory the script ran in.
+- `jq`'s `//` treats `false` as absent, so `autoCompactEnabled: false` was silently
+  ignored. Replaced with an explicit null test.
+
+### Changed
+- **Denominator is now the effective window.** On a 1M window the status line reads
+  `750k/967k (78%)` where `/context` reads `750k/1m (75%)`. Both are correct; this
+  one answers "how close am I to auto-compact".
+- Token source priority is now `total_input_tokens` → sum of `current_usage` →
+  `used_percentage × context_window_size`. The first two are exact;
+  `used_percentage` is rounded to whole percent, which is 10k of granularity on a
+  1M window.
+- When the payload carries no `context_window` at all (Claude Code older than
+  2.1.6), the token segment is omitted rather than estimated.
+- Status line is now derived entirely from the payload — no state, no disk writes.
+
+### Added
+- Auto-compact buffer honours your configuration, first match wins:
+  `AUTOCOMPACT_BUFFER_MANUAL` → `CLAUDE_CODE_AUTO_COMPACT_WINDOW` →
+  `autoCompactWindow` → `autoCompactEnabled: false` → the 33k default.
+  Window values accept `500000`, `500k` and `1m`.
+- Rate limit segment: ` · 5h NN% 7d NN%`, appended once either account window
+  crosses `RATE_LIMIT_WARN_PCT` (default 80). Set it to 101 to disable.
+
+### Removed
+- **MCP-based system overhead estimation** (`detect_mcp_servers`,
+  `SYSTEM_OVERHEAD_MANUAL`, ~50 lines). It guessed 24k-104k from a server count;
+  on a real config it returned 34k where `/context` reported 643 tokens of MCP
+  tools. The payload reports exact counts, so there is nothing left to estimate.
+- **Per-session cache** (`~/.claude/.token-cache-{session_id}`). The API always
+  provides data; the cache only ever served stale numbers. Existing files are not
+  cleaned up automatically — `rm -f ~/.claude/.token-cache-*`.
+- **Debug dump** to `~/.claude/statusline-debug.json`, which was marked temporary
+  and ran on every single status line refresh.
+- **Transcript parsing fallback**, superseded by `context_window` since 2.1.6.
+
+### Technical Details
+- Script is 145 lines, down from 210, and passes `shellcheck -S warning` clean
+- 25-case test suite covering the math, buffer overrides, degraded input and git
+- Targets bash 3.2 (macOS system bash): no `${var,,}`, no `mapfile`
+- Verified against `/context` on 2.1.278 across 200k and 1M windows
+
+**Why**: the status line overstated usage by a flat 45k. On a 1M window that is
+~5 percentage points; on a 200k window, 75% real usage displayed as 98%.
+
 ## [1.5.0] - 2026-02-20
 
 ### Changed

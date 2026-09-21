@@ -1,11 +1,11 @@
 # Status Line Output Examples
 
-This document shows real-world examples of what the status line displays in different scenarios.
+What the status line displays in different scenarios.
 
 ## Format
 
 ```
-~/directory (git-branch) [Model Name] INDICATOR XXk/YYYk (ZZ%)
+~/directory (git-branch) [Model Name] INDICATOR XXk/YYYk (ZZ%) · 5h NN% 7d NN%
 ```
 
 Components:
@@ -13,237 +13,106 @@ Components:
 - `(git-branch)` - Git branch name (only in git repositories)
 - `[Model Name]` - Claude model being used
 - `INDICATOR` - Visual usage indicator (✓, ⚠, or ⚠⚠)
-- `XXk/YYYk` - Tokens used / Context budget
-- `(ZZ%)` - Percentage of context used
+- `XXk/YYYk` - Tokens used / effective window (full window minus auto-compact buffer)
+- `(ZZ%)` - Percentage of the effective window used
+- `· 5h NN% 7d NN%` - Account rate limits, appended only above 80%
 
-## Example Scenarios
+The denominator is the effective window, not the raw one: 167k on a 200k model,
+967k on a 1M model, assuming the default 33k auto-compact buffer.
 
-### Scenario 1: Fresh Conversation - Safe Range
-```
-~/Work/myproject (main) [Claude Sonnet 4.5] ✓ 12k/200k (6%)
-```
-- **Location**: ~/Work/myproject
-- **Branch**: main
-- **Model**: Claude Sonnet 4.5
-- **Tokens**: 12,000 used out of 200,000 budget
-- **Usage**: 6% (Safe - plenty of context remaining)
-- **Indicator**: ✓ (green checkmark)
+## Usage Progression
 
-### Scenario 2: Medium Conversation - Safe Range
-```
-~/Documents/research (develop) [Claude Haiku 4.5] ✓ 67k/200k (33%)
-```
-- **Location**: ~/Documents/research
-- **Branch**: develop
-- **Model**: Claude Haiku 4.5
-- **Tokens**: 67,000 used out of 200,000 budget
-- **Usage**: 33% (Still safe)
-- **Indicator**: ✓ (green checkmark)
+A 200k window, auto-compact fires at 167k:
 
-### Scenario 3: Long Conversation - Warning Range
 ```
-~/.claude (feature/status-line) [Claude Sonnet 4.5] ⚠ 124k/200k (62%)
-```
-- **Location**: ~/.claude
-- **Branch**: feature/status-line
-- **Model**: Claude Sonnet 4.5
-- **Tokens**: 124,000 used out of 200,000 budget
-- **Usage**: 62% (Warning - getting close to limit)
-- **Indicator**: ⚠ (yellow warning symbol)
-
-### Scenario 4: Very Long Conversation - Critical Range
-```
-~/Projects/ai-app (main) [Claude Opus 4.5] ⚠⚠ 178k/200k (89%)
-```
-- **Location**: ~/Projects/ai-app
-- **Branch**: main
-- **Model**: Claude Opus 4.5
-- **Tokens**: 178,000 used out of 200,000 budget
-- **Usage**: 89% (Critical - near context limit)
-- **Indicator**: ⚠⚠ (double warning - red)
-
-### Scenario 5: Not in Git Repository
-```
-~/Downloads [Claude Haiku 4.5] ✓ 34k/200k (17%)
-```
-- **Location**: ~/Downloads
-- **Branch**: (none - not in git repo)
-- **Model**: Claude Haiku 4.5
-- **Tokens**: 34,000 used out of 200,000 budget
-- **Usage**: 17% (Safe)
-- **Indicator**: ✓ (green checkmark)
-
-### Scenario 6: Deep Directory Path
-```
-~/Work/clients/acme/projects/web-redesign/src (feature/navbar) [Claude Sonnet 4.5] ✓ 89k/200k (44%)
-```
-- **Location**: ~/Work/clients/acme/projects/web-redesign/src
-- **Branch**: feature/navbar
-- **Model**: Claude Sonnet 4.5
-- **Tokens**: 89,000 used out of 200,000 budget
-- **Usage**: 44% (Safe)
-- **Indicator**: ✓ (green checkmark)
-
-### Scenario 7: Root Directory
-```
-~ (main) [Claude Haiku 4.5] ✓ 23k/200k (11%)
-```
-- **Location**: ~ (home directory)
-- **Branch**: main (if home is a git repo)
-- **Model**: Claude Haiku 4.5
-- **Tokens**: 23,000 used out of 200,000 budget
-- **Usage**: 11% (Safe)
-- **Indicator**: ✓ (green checkmark)
-
-### Scenario 8: System Directory
-```
-/etc [Claude Sonnet 4.5] ⚠ 145k/200k (72%)
-```
-- **Location**: /etc (no ~ expansion for system paths)
-- **Branch**: (none - /etc typically not a git repo)
-- **Model**: Claude Sonnet 4.5
-- **Tokens**: 145,000 used out of 200,000 budget
-- **Usage**: 72% (Warning)
-- **Indicator**: ⚠ (yellow warning)
-
-## Window Isolation Examples
-
-### Window 1: Short conversation
-```
-~/project1 (main) [Claude Sonnet 4.5] ✓ 15k/200k (7%)
+~/myapp (main) [Sonnet 5] ✓ 3k/167k (2%)         fresh conversation
+~/myapp (main) [Sonnet 5] ✓ 28k/167k (17%)       after a few exchanges
+~/myapp (main) [Sonnet 5] ✓ 67k/167k (40%)       mid-conversation
+~/myapp (main) [Sonnet 5] ⚠ 130k/167k (78%)      approaching auto-compact
+~/myapp (main) [Sonnet 5] ⚠⚠ 155k/167k (93%)     auto-compact imminent
 ```
 
-### Window 2: Long conversation (same time)
-```
-~/project2 (develop) [Claude Sonnet 4.5] ⚠⚠ 186k/200k (93%)
-```
+The same conversation lengths on a 1M window:
 
-### Window 3: Medium conversation (same time)
 ```
-~/project3 (feature/test) [Claude Haiku 4.5] ⚠ 102k/200k (51%)
+~/myapp (main) [Opus 5] ✓ 138k/967k (14%)
+~/myapp (main) [Opus 5] ⚠ 750k/967k (78%)
+~/myapp (main) [Opus 5] ⚠⚠ 900k/967k (93%)
 ```
-
-**Note**: Each window shows its own independent token count, even when open simultaneously.
 
 ## Visual Indicator Thresholds
 
-| Indicator | Range | Color Concept | Meaning |
-|-----------|-------|---------------|---------|
-| ✓ | 0-74% | Green | Safe - plenty of context left |
-| ⚠ | 75-89% | Yellow | Warning - approaching auto-compact |
-| ⚠⚠ | 90-100% | Red | Critical - auto-compact imminent (~92%) |
+| Indicator | Range | Meaning |
+|-----------|-------|---------|
+| ✓ | 0-74% | Safe - plenty of context left |
+| ⚠ | 75-89% | Warning - approaching auto-compact |
+| ⚠⚠ | 90-100% | Critical - auto-compact imminent |
 
-## Edge Cases
+## Scenarios
 
-### No token data available (fallback to cache)
+### Not in a git repository
 ```
-~/project (main) [Claude Sonnet 4.5] ✓ 0k/200k (0%)
-```
-- This can happen on first load before any messages
-
-### Very small token usage
-```
-~/test (main) [Claude Haiku 4.5] ✓ 1k/200k (0%)
-```
-- Percentage rounds to 0% for very small values
-
-### Exactly at threshold
-```
-~/project (main) [Claude Sonnet 4.5] ⚠ 100k/200k (50%)
-```
-- 50% exactly shows ⚠ (warning threshold starts at 50%)
-
-### Branch with special characters
-```
-~/project (feature/fix-bug-#123) [Claude Sonnet 4.5] ✓ 45k/200k (22%)
-```
-- Branches with special characters display correctly
-
-### Long branch name
-```
-~/project (feature/implement-advanced-user-authentication) [Claude Sonnet 4.5] ✓ 56k/200k (28%)
-```
-- Long branch names are shown in full (may wrap on narrow terminals)
-
-## Comparison: Before and After
-
-### Without Token Counter (default Claude Code)
-```
-user@hostname:~/Work/myproject (main) [Claude Sonnet 4.5]
+~/Downloads [Haiku 4.5] ✓ 34k/167k (20%)
 ```
 
-### With Token Counter (this script)
+### Detached HEAD (rebase, bisect)
 ```
-~/Work/myproject (main) [Claude Sonnet 4.5] ✓ 45k/200k (22%)
+~/project [Sonnet 5] ✓ 34k/167k (20%)
+```
+Branch is omitted, same as outside a repository.
+
+### Deep path
+```
+~/Work/clients/acme/projects/web-redesign/src (feature/navbar) [Sonnet 5] ✓ 89k/167k (53%)
 ```
 
-**Changes**:
-- Removed: `user@hostname:` prefix (saves space)
-- Added: Token counter with indicator
-- Kept: Directory, branch, model name
-
-## Terminal Width Considerations
-
-### Wide terminal (120+ characters)
+### System path (no ~ expansion)
 ```
-~/very/long/path/to/project/subdirectory (feature/long-branch-name) [Claude Sonnet 4.5] ✓ 145k/200k (72%)
-```
-- Everything fits on one line
-
-### Narrow terminal (80 characters)
-```
-~/very/long/path/to/project/subdirectory (feature/long-branch-name) [Claude Sonnet
-4.5] ✓ 145k/200k (72%)
-```
-- May wrap to next line depending on path length
-
-**Tip**: Keep working directories reasonably short for best display.
-
-## Model Name Variations
-
-### Different Claude models show correctly
-```
-~/project (main) [Claude Haiku 4.5] ✓ 23k/200k (11%)
-~/project (main) [Claude Sonnet 4.5] ✓ 45k/200k (22%)
-~/project (main) [Claude Opus 4.5] ✓ 89k/200k (44%)
+/etc [Sonnet 5] ⚠ 130k/167k (78%)
 ```
 
-## Real-World Usage Patterns
+### Rate limits running low
+```
+~/myapp (main) [Opus 5] ⚠ 750k/967k (78%) · 5h 82% 7d 50%
+```
+Appears once either window crosses `RATE_LIMIT_WARN_PCT` (default 80).
 
-### Typical progression in a conversation
+### Auto-compact disabled
+```
+~/myapp (main) [Opus 5] ⚠ 750k/1000k (75%)
+```
+With `autoCompactEnabled: false`, there is no buffer and the full window is the budget.
 
-**Start**:
+### Custom auto-compact window
 ```
-~/myapp (main) [Claude Sonnet 4.5] ✓ 3k/200k (1%)
+~/myapp (main) [Opus 5] ⚠⚠ 450k/500k (90%)
 ```
+With `CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000` or `/autocompact 500k`.
 
-**After a few exchanges**:
+### Over the effective window
 ```
-~/myapp (main) [Claude Sonnet 4.5] ✓ 28k/200k (14%)
+~/myapp (main) [Opus 5] ⚠⚠ 980k/967k (100%)
 ```
+Percentage is capped at 100%; auto-compact has not run yet. Run `/compact`.
 
-**Mid-conversation**:
-```
-~/myapp (main) [Claude Sonnet 4.5] ✓ 67k/200k (33%)
-```
+## Degraded Input
 
-**Deep discussion**:
+### No context_window in the payload
 ```
-~/myapp (main) [Claude Sonnet 4.5] ⚠ 123k/200k (61%)
+~/project (main) [Sonnet 5]
 ```
+Claude Code older than 2.1.6. The token segment is omitted rather than guessed.
 
-**Approaching limit**:
+### No usable payload at all
 ```
-~/myapp (main) [Claude Sonnet 4.5] ⚠⚠ 182k/200k (91%)
+ [?]
 ```
-
-**Time to start new conversation!**
+`jq` missing, or stdin was empty or malformed.
 
 ## Notes
 
-1. All examples use rounded token counts (XXk format)
-2. Percentages are rounded to nearest whole number
-3. Git branch only shows when in a git repository
-4. Path always uses ~ expansion for home directory
-5. Each window maintains independent token tracking
-6. Cache files ensure counts persist across restarts
+1. Token counts are truncated to whole thousands (`138419` → `138k`)
+2. Percentages are rounded to the nearest whole number
+3. Path always uses `~` expansion for the home directory
+4. The script keeps no state between invocations — every line is derived from the
+   payload Claude Code just handed it

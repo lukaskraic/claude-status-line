@@ -5,425 +5,243 @@ Technical implementation details for Claude Code Status Line with Token Counter.
 ## Table of Contents
 
 - [Overview](#overview)
-- [System Architecture](#system-architecture)
 - [Data Flow](#data-flow)
 - [Token Extraction Strategy](#token-extraction-strategy)
-- [Per-Window Isolation](#per-window-isolation)
-- [Cache Mechanism](#cache-mechanism)
+- [Auto-compact Buffer Resolution](#auto-compact-buffer-resolution)
 - [Display Formatting](#display-formatting)
 - [Error Handling](#error-handling)
+- [Dependencies](#dependencies)
+- [Performance](#performance)
+- [Debugging](#debugging)
 
 ## Overview
 
-The status line is implemented as a bash script that:
-1. Receives JSON input from Claude Code via stdin
-2. Extracts and processes token usage data
-3. Formats and outputs a status line string
-4. Maintains per-window cache for persistence
-
-## System Architecture
+The status line is a single bash script. Claude Code runs it on every status line
+refresh, hands it a JSON payload on stdin and prints whatever it writes to stdout.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Claude Code Runtime                      │
-│                                                              │
-│  ┌────────────┐    ┌────────────┐    ┌────────────┐        │
-│  │  Window 1  │    │  Window 2  │    │  Window 3  │        │
-│  │ session_a  │    │ session_b  │    │ session_c  │        │
-│  └─────┬──────┘    └─────┬──────┘    └─────┬──────┘        │
-│        │                  │                  │               │
-└────────┼──────────────────┼──────────────────┼───────────────┘
-         │                  │                  │
-         │ JSON Input       │ JSON Input       │ JSON Input
-         ▼                  ▼                  ▼
-    ┌────────────────────────────────────────────────────┐
-    │         statusline-with-tokens.sh                  │
-    │                                                     │
-    │  ┌──────────────────────────────────────────────┐ │
-    │  │  1. Extract session_id from JSON            │ │
-    │  └──────────────────────────────────────────────┘ │
-    │  ┌──────────────────────────────────────────────┐ │
-    │  │  2. Get token data (3-tier fallback)        │ │
-    │  │     - JSON (.context.usage.total)            │ │
-    │  │     - Transcript file parsing                 │ │
-    │  │     - Cache file (~/.claude/.token-cache-*)   │ │
-    │  └──────────────────────────────────────────────┘ │
-    │  ┌──────────────────────────────────────────────┐ │
-    │  │  3. Format display string                     │ │
-    │  └──────────────────────────────────────────────┘ │
-    │  ┌──────────────────────────────────────────────┐ │
-    │  │  4. Update cache for this session            │ │
-    │  └──────────────────────────────────────────────┘ │
-    └─────────────────────┬────────────────────────────┘
-                          │ Output to stdout
-                          ▼
-                 Status Line Display
+Claude Code ──JSON on stdin──▶ statusline-with-tokens.sh ──string on stdout──▶ status line
 ```
+
+Everything the script needs is in that payload. It keeps no state: no cache files,
+no transcript reads, no configuration beyond two constants at the top and the
+auto-compact settings Claude Code already stores.
 
 ## Data Flow
 
 ### Input JSON Structure
 
-Claude Code provides JSON via stdin with this structure:
+The fields this script reads, as emitted by Claude Code 2.1.278:
 
 ```json
 {
-  "session_id": "abc123def456",
-  "workspace": {
-    "current_dir": "/Users/username/project"
-  },
-  "model": {
-    "display_name": "Claude Sonnet 4.5"
-  },
-  "context": {
-    "usage": {
-      "total": 45000
-    },
-    "budget": {
-      "limit": 200000
+  "workspace": { "current_dir": "/Users/username/project" },
+  "cwd": "/Users/username/project",
+  "model": { "display_name": "Opus 5" },
+  "context_window": {
+    "context_window_size": 1000000,
+    "total_input_tokens": 138419,
+    "used_percentage": 14,
+    "current_usage": {
+      "input_tokens": 2,
+      "output_tokens": 248,
+      "cache_creation_input_tokens": 4343,
+      "cache_read_input_tokens": 59035
     }
   },
-  "transcript_path": "/Users/username/.claude/transcripts/session-abc123.jsonl"
+  "rate_limits": {
+    "five_hour": { "used_percentage": 11 },
+    "seven_day": { "used_percentage": 8 }
+  }
 }
 ```
+
+The payload carries considerably more (`session_id`, `transcript_path`, `cost`,
+`prompt_cache`, `effort`, `thinking`, `vim`, `worktree`, `pr`, …); the script
+ignores everything it does not display.
+
+`context_window` arrives from Claude Code 2.1.6 onwards. `rate_limits` from 2.1.251.
 
 ### Output Format
 
 ```
-~/project (main) [Claude Sonnet 4.5] ✓ 45k/200k (22%)
+~/project (main) [Opus 5] ✓ 138k/967k (14%)
 ```
 
 Components:
-1. **Directory**: `~/project` (with ~ expansion)
-2. **Git Branch**: `(main)` (if in git repository)
-3. **Model Name**: `[Claude Sonnet 4.5]`
-4. **Token Info**: `✓ 45k/200k (22%)`
-   - Indicator: ✓/⚠/⚠⚠
-   - Used: 45k
-   - Budget: 200k
-   - Percentage: 22%
+
+1. **Directory**: `~/project` (with `~` expansion)
+2. **Git Branch**: `(main)` — omitted outside a git repository
+3. **Model Name**: `[Opus 5]`
+4. **Token Info**: `✓ 138k/967k (14%)` — indicator, used, effective window, percentage
+5. **Rate limits**: ` · 5h 82% 7d 50%` — appended only above `RATE_LIMIT_WARN_PCT`
 
 ## Token Extraction Strategy
 
-### 3-Tier Fallback System
+One `jq` pass pulls every field at once, joined by `\u001f` (unit separator) rather
+than tabs — tab is IFS whitespace, so bash collapses runs of it and an empty field
+would shift every value after it.
 
 ```bash
-# Tier 1: Primary - JSON Input
-tokens=$(echo "$input" | jq -r '.context.usage.total // 0')
-budget=$(echo "$input" | jq -r '.context.budget.limit // 200000')
-
-# Tier 2: Secondary - Transcript File
-if [[ "$tokens" == "0" || "$tokens" == "null" ]]; then
-    transcript=$(echo "$input" | jq -r '.transcript_path')
-    tokens=$(tail -1 "$transcript" | jq -r '
-        select(.message.usage != null) |
-        .message.usage |
-        ((.cache_read_input_tokens // 0) +
-         (.input_tokens // 0) +
-         (.output_tokens // 0))
-    ')
-fi
-
-# Tier 3: Tertiary - Cache File
-if [[ "$tokens" == "0" || "$tokens" == "null" ]]; then
-    tokens=$(cat "$CACHE_FILE" 2>/dev/null)
-fi
+IFS=$'\037' read -r cwd model window exact_tokens usage_tokens used_pct five_h seven_d <<<"$(
+    jq -r '[ ... ] | join("\u001f")' <<<"$input" 2>/dev/null
+)"
 ```
 
-### Why 3 Tiers?
+Three token sources, in descending order of precision:
 
-1. **JSON Input** (Tier 1): Most reliable, real-time data
-2. **Transcript Parsing** (Tier 2): Fallback when JSON incomplete
-3. **Cache File** (Tier 3): Last resort, previous known value
+| Source | Precision | When used |
+|--------|-----------|-----------|
+| `context_window.total_input_tokens` | exact | normal operation |
+| sum of `context_window.current_usage` | exact | older payloads without `total_input_tokens` |
+| `used_percentage × context_window_size` | ±1% of the window (10k on a 1M window) | last resort |
 
-This ensures the status line always shows meaningful data, even during temporary unavailability.
+If none of them yield a positive value, the token segment is omitted entirely. The
+script never substitutes an estimate — a missing number is more honest than a
+fabricated one.
 
-## Per-Window Isolation
+## Auto-compact Buffer Resolution
 
-### Session ID Mechanism
+Claude Code reserves a fixed slice of the context window for the auto-compact
+summary and reports it as a separate `/context` row:
+
+```
+| Free space         | 148.2k | 74.1% |
+| Autocompact buffer | 33k    | 16.5% |
+```
+
+Measured on 2.1.278, that buffer is **33,000 tokens on both a 200k and a 1M
+window** — fixed, not proportional. Usage counts against
+`context_window_size - buffer`, because that is where compaction fires.
+
+`used_percentage` in the payload is measured against the *full* window and
+excludes the buffer, so the subtraction happens here.
+
+`resolve_buffer()` walks these in order and returns on the first match:
+
+| Source | Meaning |
+|--------|---------|
+| `AUTOCOMPACT_BUFFER_MANUAL` | buffer in tokens, set in the script |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | effective window; buffer is `full - value` |
+| `autoCompactWindow` (settings.json) | same; accepts `500000`, `500k`, `1m` |
+| `autoCompactEnabled: false` | buffer `0` |
+| `AUTOCOMPACT_BUFFER` | default `33000` |
+
+Note that `jq`'s `//` operator treats `false` as absent, so the enabled check uses
+an explicit null test:
 
 ```bash
-# Extract unique session_id from Claude Code
-session_id=$(echo "$input" | jq -r '.session_id // "default"')
-
-# Create per-session cache file
-CACHE_FILE="$HOME/.claude/.token-cache-${session_id}"
+jq -r '[(if .autoCompactEnabled == null then true else .autoCompactEnabled end), ...]'
 ```
-
-### How It Works
-
-1. Each Claude Code window gets a **unique `session_id`**
-2. Cache file is named: `~/.claude/.token-cache-{session_id}`
-3. Examples:
-   - Window 1: `.token-cache-abc123`
-   - Window 2: `.token-cache-def456`
-   - Window 3: `.token-cache-ghi789`
-
-### Benefits
-
-- ✅ Complete isolation between windows
-- ✅ No shared state
-- ✅ Independent token tracking
-- ✅ Parallel conversations don't interfere
-- ✅ Persistent per-session even if window closed/reopened
-
-## Cache Mechanism
-
-### Cache File Location
-
-```
-~/.claude/.token-cache-{session_id}
-```
-
-### Cache Content
-
-Simple text file containing the last known token count:
-```
-45000
-```
-
-### Cache Update Logic
-
-```bash
-# Only update cache if we have real data (not zero or null)
-if [[ -n "$tokens" && "$tokens" != "0" && "$tokens" != "null" ]]; then
-    echo "$tokens" > "$CACHE_FILE" 2>/dev/null
-fi
-```
-
-### Cache Usage
-
-```bash
-# Read from cache as last resort
-if [[ -f "$CACHE_FILE" ]]; then
-    tokens=$(cat "$CACHE_FILE" 2>/dev/null)
-fi
-```
-
-### Cache Lifecycle
-
-- **Created**: When first token data is received for a session
-- **Updated**: Every time valid token data is processed
-- **Read**: When JSON and transcript data unavailable
-- **Deleted**: Manual cleanup (can be safely deleted)
 
 ## Display Formatting
-
-### Token Formatting
-
-```bash
-# Convert tokens to K suffix for readability
-tokens_k=$(($tokens / 1000))
-budget_k=$(($budget / 1000))
-
-# Example: 45000 → 45k, 200000 → 200k
-```
 
 ### Percentage Calculation
 
 ```bash
-percentage=$(awk "BEGIN {printf \"%.0f\", ($tokens / $budget) * 100}")
+effective=$(( window - buffer ))
+percentage=$(awk "BEGIN{p = ($tokens / $effective) * 100; if (p > 100) p = 100; printf \"%.0f\", p}")
 
-# Example: 45000 / 200000 = 0.225 → 22%
+# Example: 750000 / 967000 = 0.7756 → 78%
 ```
+
+The cap matters: usage can exceed the effective window in the moment before
+auto-compact runs, and `103%` reads as a bug rather than as a warning.
 
 ### Visual Indicators
 
-Thresholds aligned with Claude Code auto-compact (~92%):
-
 ```bash
-if [[ $percentage -lt 75 ]]; then
-    status="✓"          # Safe
-elif [[ $percentage -lt 90 ]]; then
-    status="⚠"          # Warning
+if (( percentage < 75 )); then
+    status="✓"
+elif (( percentage < 90 )); then
+    status="⚠"
 else
-    status="⚠⚠"         # Critical
+    status="⚠⚠"
 fi
 ```
 
 | Indicator | Range | Meaning |
 |-----------|-------|---------|
 | ✓ | <75% | Safe (plenty of context) |
-| ⚠ | 75-90% | Warning (approaching auto-compact) |
-| ⚠⚠ | >90% | Critical (auto-compact imminent) |
+| ⚠ | 75-89% | Warning (approaching auto-compact) |
+| ⚠⚠ | ≥90% | Critical (auto-compact imminent) |
 
 ### Final Output
 
 ```bash
-printf "%s%s [%s]%s" \
-    "$display_dir" \
-    "$git_branch" \
-    "$model" \
-    "$tokens_display"
+printf "%s%s [%s]%s%s" \
+    "$display_dir" "$git_branch" "$model" "$tokens_display" "$limits_display"
 ```
-
-Components:
-- `$display_dir`: ~/project
-- `$git_branch`: (main) - empty if not in git repo
-- `$model`: Claude Sonnet 4.5
-- `$tokens_display`: ✓ 45k/200k (22%)
 
 ## Error Handling
 
-### Graceful Degradation
+| Failure | Behaviour |
+|---------|-----------|
+| No stdin / malformed JSON | prints ` [?]`, no token segment |
+| No `context_window` in payload | directory, branch and model only |
+| `cwd` missing or not a directory | branch omitted, `git` never invoked |
+| Unreadable `settings.json` | falls through to the default buffer |
+| Usage above the effective window | percentage capped at 100% |
 
-The script handles errors gracefully:
-
-1. **Missing jq**: Script fails but provides clear error
-2. **Invalid JSON**: Falls back to transcript/cache
-3. **Missing transcript**: Falls back to cache
-4. **Missing cache**: Displays 0 or omits token info
-5. **Invalid token values**: Defaults to 0
-
-### Safe Defaults
-
-```bash
-# Ensure tokens are always valid numbers
-tokens=${tokens:-0}
-[[ "$tokens" == "null" || -z "$tokens" ]] && tokens=0
-
-# Ensure budget has safe default
-budget=${budget:-200000}
-[[ "$budget" == "null" || -z "$budget" ]] && budget=200000
-```
-
-### Error Prevention
-
-- All jq commands use `2>/dev/null` to suppress errors
-- File operations check for existence before reading
-- Arithmetic operations validated before execution
-- String operations use parameter expansion safely
+All `jq` invocations are `2>/dev/null` and every numeric comparison runs in an
+arithmetic context, where an empty variable evaluates to `0`.
 
 ## Dependencies
 
 ### Required
 
-- **bash**: Version 3.2+ (pre-installed on macOS/Linux)
-- **jq**: JSON processor (install via package manager)
+- **bash**: 3.2+ — macOS still ships 3.2, so no `${var,,}`, no associative arrays,
+  no `mapfile`
+- **jq**: JSON processor
 
 ### Standard Utilities
 
-- `cat`: Read stdin
-- `tail`: Read last line of files
-- `dirname`: Extract directory path
-- `git`: Git branch detection (optional)
-- `awk`: Percentage calculation
-- `printf`: Format output
-
-### Claude Code Integration
-
-- Requires Claude Code to provide JSON input via stdin
-- Uses `session_id` field for window isolation
-- Reads `transcript_path` for fallback data
+- `cat` — read stdin
+- `git` — branch detection (optional; skipped when `cwd` is not a directory)
+- `awk` — percentage arithmetic
+- `tr` — lowercasing for `parse_window` (bash 3.2 has no case conversion)
+- `printf` — format output
 
 ## Performance
 
-### Execution Time
+Two `jq` invocations at most: one over the payload, one over `settings.json` (only
+when no environment override is set). Typical execution is well under 50ms,
+dominated by `git branch --show-current`.
 
-Typical execution: **< 50ms**
-
-Breakdown:
-- JSON parsing (jq): ~10ms
-- File operations: ~5ms
-- Git branch detection: ~20ms (if in repo)
-- String formatting: ~5ms
-
-### Optimization Strategies
-
-1. **Cache file**: Fast fallback without file scanning
-2. **Lazy git check**: Only runs if in directory with git repo
-3. **Minimal jq calls**: Extract all needed data in single pass
-4. **No external network calls**: All local operations
-
-### Resource Usage
-
-- **Memory**: < 5MB
-- **CPU**: Minimal (single execution per status update)
-- **Disk**: < 1KB per cache file
-- **I/O**: 1-3 file reads maximum per execution
-
-## Security Considerations
-
-### Input Validation
-
-- JSON input is not directly executed
-- All paths validated before use
-- No eval or command injection vectors
-
-### File Permissions
-
-```bash
-chmod +x statusline-with-tokens.sh  # Executable
-```
-
-Cache files inherit user's umask (typically 644).
-
-### Isolation
-
-- Each session has isolated cache file
-- No shared state between users
-- Cache directory (`~/.claude/`) is user-private
-
-## Extensibility
-
-### Customization Points
-
-1. **Threshold percentages** (lines 88-96):
-   ```bash
-   if [[ $percentage -lt 50 ]]; then  # Change 50 to your preference
-   ```
-
-2. **Display format** (line 103):
-   ```bash
-   printf "%s%s [%s]%s" ...  # Modify format string
-   ```
-
-3. **Token formatting** (lines 84-99):
-   ```bash
-   tokens_k=$(($tokens / 1000))  # Change divisor for different units
-   ```
-
-### Future Enhancements
-
-Potential additions:
-- Color customization via environment variables
-- Configurable threshold levels
-- Different display modes (minimal/verbose)
-- Token usage history tracking
-- Estimated time to context limit
+Claude Code debounces status line refreshes at 300ms, so the script is not invoked
+more than a few times per second even during heavy output.
 
 ## Debugging
-
-### Enable Debug Output
-
-Temporarily modify the script to log debug info:
-
-```bash
-# Add at the beginning of script
-exec 2>> ~/.claude/statusline-debug.log
-set -x  # Enable bash tracing
-```
 
 ### Test Manually
 
 ```bash
-# Test with sample JSON
-echo '{"session_id":"test","workspace":{"current_dir":"'$(pwd)'"},"model":{"display_name":"Test"},"context":{"usage":{"total":45000},"budget":{"limit":200000}}}' | ~/.claude/statusline-with-tokens.sh
+echo '{"workspace":{"current_dir":"'"$PWD"'"},"model":{"display_name":"Opus 5"},
+       "context_window":{"context_window_size":1000000,"total_input_tokens":750000}}' \
+  | ~/.claude/statusline-with-tokens.sh
+# ~/your/dir (main) [Opus 5] ⚠ 750k/967k (78%)
 ```
 
-### Check Cache Files
+### Capture a Real Payload
+
+Point `statusLine.command` at a wrapper that tees stdin before calling the script:
 
 ```bash
-# List all session caches
-ls -la ~/.claude/.token-cache-*
-
-# View specific cache
-cat ~/.claude/.token-cache-abc123
+#!/bin/bash
+tee ~/.claude/statusline-payload.json | ~/.claude/statusline-with-tokens.sh
 ```
+
+Note that Claude Code does not run the status line in headless (`claude -p`) mode,
+so payloads can only be captured from an interactive session.
+
+### Verify Against `/context`
+
+Run `/context` in Claude Code. Its headline `Tokens: X / window` should match this
+script's numerator; the "Autocompact buffer" row should match the constant used to
+derive the denominator.
 
 ## References
 
-- [Claude Code Documentation](https://code.claude.com/docs)
+- [Claude Code status line documentation](https://code.claude.com/docs/en/statusline)
 - [jq Manual](https://stedolan.github.io/jq/manual/)
 - [Bash Reference Manual](https://www.gnu.org/software/bash/manual/)
-- [Git Documentation](https://git-scm.com/doc)

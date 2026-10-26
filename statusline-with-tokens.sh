@@ -24,7 +24,7 @@
 
 AUTOCOMPACT_BUFFER=33000
 
-# Warn about account rate limits once either window crosses this percentage.
+# Mark an account rate limit with ⚠ once its window crosses this percentage.
 RATE_LIMIT_WARN_PCT=80
 
 input=$(cat)
@@ -32,7 +32,9 @@ input=$(cat)
 # One jq pass over the payload. context_window is present since Claude Code 2.1.6;
 # total_input_tokens is exact, used_percentage is rounded to whole percent and is
 # only a fallback.
-IFS=$'\037' read -r cwd model window exact_tokens usage_tokens used_pct five_h seven_d <<<"$(
+# rate_limits only exists for Pro/Max subscriptions and only after the first API
+# response; percentages are rounded here because bash arithmetic is integer-only.
+IFS=$'\037' read -r cwd model window exact_tokens usage_tokens used_pct five_h five_h_reset seven_d <<<"$(
     jq -r '[
         (.workspace.current_dir // .cwd // ""),
         (.model.display_name // "?"),
@@ -43,13 +45,17 @@ IFS=$'\037' read -r cwd model window exact_tokens usage_tokens used_pct five_h s
              + (.cache_creation_input_tokens // 0)
              + (.cache_read_input_tokens // 0))),
         (.context_window.used_percentage // -1),
-        (.rate_limits.five_hour.used_percentage // -1),
-        (.rate_limits.seven_day.used_percentage // -1)
+        (.rate_limits.five_hour.used_percentage // -1 | round),
+        (.rate_limits.five_hour.resets_at // 0 | floor),
+        (.rate_limits.seven_day.used_percentage // -1 | round)
     ] | join("\u001f")' <<<"$input" 2>/dev/null
 )"
 
 # jq failed outright (no stdin, malformed JSON) - fall back to something printable.
 model=${model:-?}
+five_h=${five_h:--1}
+five_h_reset=${five_h_reset:-0}
+seven_d=${seven_d:--1}
 
 display_dir="${cwd/#$HOME/~}"
 
@@ -136,10 +142,36 @@ if (( window > 0 && tokens > 0 )); then
     tokens_display=" ${status} $(( tokens / 1000 ))k/$(( effective / 1000 ))k (${percentage}%)"
 fi
 
-# Account rate limits are only worth the space once they get close.
+limit_pct() {
+    local pct=$1
+    if (( pct >= RATE_LIMIT_WARN_PCT )); then
+        echo "⚠${pct}%"
+    else
+        echo "${pct}%"
+    fi
+}
+
+# Time left until the 5-hour session window resets, e.g. "2h05m" or "42m".
+# Empty once resets_at is in the past - the payload is stale until the next turn.
+session_reset_in() {
+    local left=$(( $1 - $(date +%s) ))
+    (( $1 <= 0 || left <= 0 )) && return
+    local mins=$(( (left + 59) / 60 ))
+    if (( mins >= 60 )); then
+        printf '%dh%02dm' $(( mins / 60 )) $(( mins % 60 ))
+    else
+        printf '%dm' "$mins"
+    fi
+}
+
 limits_display=""
-if (( five_h >= RATE_LIMIT_WARN_PCT || seven_d >= RATE_LIMIT_WARN_PCT )); then
-    limits_display=" · 5h ${five_h}% 7d ${seven_d}%"
+if (( five_h >= 0 )); then
+    limits_display=" · Session $(limit_pct "$five_h")"
+    reset_in=$(session_reset_in "$five_h_reset")
+    [[ -n "$reset_in" ]] && limits_display+=" (reset ${reset_in})"
+fi
+if (( seven_d >= 0 )); then
+    limits_display+=" · Week $(limit_pct "$seven_d")"
 fi
 
 printf "%s%s [%s]%s%s" "$display_dir" "$git_branch" "$model" "$tokens_display" "$limits_display"

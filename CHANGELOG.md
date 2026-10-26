@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-10-26
+
+### Changed
+- Rate limits are always shown as ` · Session S% (reset 2h05m) · Week W%` instead of
+  ` · 5h NN% 7d NN%` only above 80%. Session is the 5-hour window with the time left
+  until `five_hour.resets_at`; Week is the 7-day window. `RATE_LIMIT_WARN_PCT` now only
+  adds a `⚠` prefix, so `101` no longer hides the segment — drop `"$limits_display"`
+  from the final `printf` instead.
+- Rate-limit percentages are rounded in `jq`, so fractional values no longer break
+  bash integer arithmetic.
+
 ## [1.6.0] - 2026-09-21
 
 ### Fixed

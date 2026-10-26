@@ -50,8 +50,8 @@ The fields this script reads, as emitted by Claude Code 2.1.278:
     }
   },
   "rate_limits": {
-    "five_hour": { "used_percentage": 11 },
-    "seven_day": { "used_percentage": 8 }
+    "five_hour": { "used_percentage": 11, "resets_at": 1789988400 },
+    "seven_day": { "used_percentage": 8, "resets_at": 1790384400 }
   }
 }
 ```
@@ -60,12 +60,14 @@ The payload carries considerably more (`session_id`, `transcript_path`, `cost`,
 `prompt_cache`, `effort`, `thinking`, `vim`, `worktree`, `pr`, …); the script
 ignores everything it does not display.
 
-`context_window` arrives from Claude Code 2.1.6 onwards. `rate_limits` from 2.1.251.
+`context_window` arrives from Claude Code 2.1.6 onwards. `rate_limits` from 2.1.251, only for
+Pro/Max subscriptions and only after the first API response; `resets_at` is a Unix timestamp
+in seconds. Rate-limit percentages are rounded in `jq` because bash arithmetic is integer-only.
 
 ### Output Format
 
 ```
-~/project (main) [Opus 5] ✓ 138k/967k (14%)
+~/project (main) [Opus 5] ✓ 138k/967k (14%) · Session 11% (reset 2h05m) · Week 8%
 ```
 
 Components:
@@ -74,7 +76,10 @@ Components:
 2. **Git Branch**: `(main)` — omitted outside a git repository
 3. **Model Name**: `[Opus 5]`
 4. **Token Info**: `✓ 138k/967k (14%)` — indicator, used, effective window, percentage
-5. **Rate limits**: ` · 5h 82% 7d 50%` — appended only above `RATE_LIMIT_WARN_PCT`
+5. **Rate limits**: ` · Session 11% (reset 2h05m) · Week 8%` — omitted when the payload has no
+   `rate_limits`. The countdown is `five_hour.resets_at − now`, rounded up to the minute
+   (`XhMMm` from one hour, `Mm` below), and hidden once `resets_at` is in the past. Values at or
+   above `RATE_LIMIT_WARN_PCT` get a `⚠` prefix.
 
 ## Token Extraction Strategy
 

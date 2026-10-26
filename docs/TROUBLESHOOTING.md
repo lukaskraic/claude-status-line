@@ -181,7 +181,18 @@ Shorten it by editing the final `printf`. Dropping the directory, for example:
 printf "%s [%s]%s%s" "$git_branch" "$model" "$tokens_display" "$limits_display"
 ```
 
-To suppress the rate limit segment, set `RATE_LIMIT_WARN_PCT=101`.
+To suppress the session/week segment, drop `"$limits_display"` from the `printf`.
+
+### Session / Week not shown
+
+`rate_limits` is only in the payload for Pro/Max subscriptions, and only after the first
+API response of a session. API-key users never see it.
+
+### `(reset …)` missing or not ticking
+
+The countdown is hidden once `five_hour.resets_at` is in the past — the payload refreshes on
+the next API response. Between redraws the countdown does not move; it is recomputed only when
+Claude Code re-runs the status line.
 
 ## Git Integration Issues
 

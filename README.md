@@ -10,7 +10,7 @@ Status line for Claude Code that shows how much context you have left **before a
   - ✓ Safe (0-74% usage)
   - ⚠ Warning (75-89% usage)
   - ⚠⚠ Critical (90-100% usage, auto-compact imminent)
-- ✅ **Rate limit warning**: appends your 5-hour / 7-day account usage once either crosses 80%
+- ✅ **Session & week limits**: 5-hour session usage with countdown to reset, and 7-day usage, in % (Pro/Max); ⚠ from 80%
 - ✅ **Respects your auto-compact config**: honours `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, `autoCompactWindow` and `autoCompactEnabled`
 - ✅ **Git Integration**: shows current branch when in a git repository
 - ✅ **Model Display**: shows which Claude model you're using
@@ -18,15 +18,17 @@ Status line for Claude Code that shows how much context you have left **before a
 ## Demo
 
 ```
-Format: ~/directory (branch) [Model Name] ✓ XXk/YYYk (ZZ%)
+Format: ~/directory (branch) [Model Name] ✓ XXk/YYYk (ZZ%) · Session S% (reset 1h23m) · Week W%
 
 Examples:
-~/Work/myproject (main) [Opus 5] ✓ 138k/967k (14%)
-~/Documents (develop) [Sonnet 5] ⚠ 130k/167k (78%)
-~/.claude [Haiku 4.5] ⚠⚠ 150k/167k (90%) · 5h 82% 7d 50%
+~/Work/myproject (main) [Opus 5] ✓ 138k/967k (14%) · Session 14% (reset 2h05m) · Week 9%
+~/Documents (develop) [Sonnet 5] ⚠ 130k/167k (78%) · Session ⚠86% (reset 42m) · Week 31%
+~/.claude [Haiku 4.5] ⚠⚠ 150k/167k (90%)
 ```
 
 The denominator is the effective window: 967k on a 1M model, 167k on a 200k model.
+
+Session and Week come from the account rate limits, which Claude Code only sends for Pro/Max subscriptions (last example is an API-key user).
 
 ## Quick Install
 
@@ -67,7 +69,7 @@ Claude Code passes a JSON payload on stdin. The script:
 1. **Reads the token count** from `context_window`, preferring the exact sources:
    `total_input_tokens` → sum of `current_usage` → `used_percentage × context_window_size`
 2. **Subtracts the auto-compact buffer from the window** to get the effective budget
-3. **Formats** directory, branch, model, usage and (when high) rate limits
+3. **Formats** directory, branch, model, usage, and session/week rate limits with the time left until the session resets
 
 If the payload has no `context_window` object at all, the token segment is omitted rather than guessed.
 
@@ -108,9 +110,15 @@ The buffer is resolved in this order, first match wins:
 
 If Anthropic changes the constant, edit `AUTOCOMPACT_BUFFER` at the top of the script. To check the current value, run `/context` and read the "Autocompact buffer" row.
 
-### Rate limit warning
+### Session & week limits
 
-`RATE_LIMIT_WARN_PCT` (default `80`) controls when ` · 5h NN% 7d NN%` is appended. Set it to `101` to switch the segment off.
+` · Session S% (reset 2h05m) · Week W%` is always appended when the payload has `rate_limits`:
+
+- **Session** — `rate_limits.five_hour.used_percentage`; `(reset …)` is the time left until `five_hour.resets_at`, hidden once that moment has passed and the payload is stale
+- **Week** — `rate_limits.seven_day.used_percentage`
+- `RATE_LIMIT_WARN_PCT` (default `80`) prefixes a value with `⚠` once it reaches the threshold
+
+The countdown is recomputed whenever Claude Code redraws the status line. To hide the segment, drop `"$limits_display"` from the final `printf`.
 
 ### Customization
 

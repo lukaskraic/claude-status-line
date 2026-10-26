@@ -5,7 +5,7 @@ What the status line displays in different scenarios.
 ## Format
 
 ```
-~/directory (git-branch) [Model Name] INDICATOR XXk/YYYk (ZZ%) · 5h NN% 7d NN%
+~/directory (git-branch) [Model Name] INDICATOR XXk/YYYk (ZZ%) · Session S% (reset 1h23m) · Week W%
 ```
 
 Components:
@@ -15,7 +15,8 @@ Components:
 - `INDICATOR` - Visual usage indicator (✓, ⚠, or ⚠⚠)
 - `XXk/YYYk` - Tokens used / effective window (full window minus auto-compact buffer)
 - `(ZZ%)` - Percentage of the effective window used
-- `· 5h NN% 7d NN%` - Account rate limits, appended only above 80%
+- `· Session S% (reset 1h23m)` - 5-hour account limit and time until it resets (Pro/Max only)
+- `· Week W%` - 7-day account limit (Pro/Max only); either gets a ⚠ prefix from 80%
 
 The denominator is the effective window, not the raw one: 167k on a 200k model,
 967k on a 1M model, assuming the default 33k auto-compact buffer.
@@ -71,11 +72,22 @@ Branch is omitted, same as outside a repository.
 /etc [Sonnet 5] ⚠ 130k/167k (78%)
 ```
 
-### Rate limits running low
+### Session and week limits
 ```
-~/myapp (main) [Opus 5] ⚠ 750k/967k (78%) · 5h 82% 7d 50%
+~/myapp (main) [Opus 5] ✓ 138k/967k (14%) · Session 14% (reset 2h05m) · Week 9%
 ```
-Appears once either window crosses `RATE_LIMIT_WARN_PCT` (default 80).
+
+### Session limit running low
+```
+~/myapp (main) [Opus 5] ⚠ 750k/967k (78%) · Session ⚠86% (reset 42m) · Week 50%
+```
+`⚠` once a window crosses `RATE_LIMIT_WARN_PCT` (default 80).
+
+### Session reset already passed
+```
+~/myapp (main) [Opus 5] ✓ 52k/967k (5%) · Session 62% · Week 12%
+```
+Countdown hidden until the next API response refreshes the payload.
 
 ### Auto-compact disabled
 ```

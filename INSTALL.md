@@ -17,9 +17,9 @@ Before installing, ensure you have:
 
 ### Required
 
-1. **Claude Code** - [Download and install](https://code.claude.com)
+1. **Claude Code 2.1.6+** - [Download and install](https://code.claude.com). Older versions don't send `context_window`; session/week limits need a recent 2.1.x release and a Pro/Max subscription
 2. **jq** - JSON processor (install instructions below)
-3. **Bash** - Comes pre-installed on macOS and most Linux distributions
+3. **Bash** - Comes pre-installed on macOS and most Linux distributions (bash 3.2 is enough)
 
 ### Installing jq
 
@@ -123,21 +123,24 @@ The `x` permissions indicate the script is executable.
 ### 2. Test Script Manually
 
 ```bash
-echo '{"workspace":{"current_dir":"'$(pwd)'"},"model":{"display_name":"Test Model"},"context":{"usage":{"total":45000},"budget":{"limit":200000}},"session_id":"test"}' | ~/.claude/statusline-with-tokens.sh
+echo '{"workspace":{"current_dir":"'"$PWD"'"},"model":{"display_name":"Test Model"},"context_window":{"context_window_size":200000,"total_input_tokens":45000},"rate_limits":{"five_hour":{"used_percentage":14,"resets_at":'$(( $(date +%s) + 7500 ))'},"seven_day":{"used_percentage":9}}}' \
+  | ~/.claude/statusline-with-tokens.sh
 ```
 
-Expected output:
+Expected output (branch only inside a git repo):
 ```
-~/current/directory [Test Model] ✓ 45k/200k (22%)
+~/current/directory (branch) [Test Model] ✓ 45k/167k (27%) · Session 14% (reset 2h05m) · Week 9%
 ```
 
 ### 3. Verify in Claude Code
 
-Start a new conversation in Claude Code and check the status line at the bottom of your terminal. You should see:
+Start a new conversation, send a message, and check the status line:
 
 ```
-~/your/directory (branch) [Model Name] ✓ XXk/200k (XX%)
+~/your/directory (branch) [Model] ✓ XXk/YYYk (ZZ%) · Session S% (reset 1h23m) · Week W%
 ```
+
+Tokens appear after the first response. `Session`/`Week` appear only on Pro/Max subscriptions.
 
 ## Upgrading
 
@@ -180,9 +183,9 @@ To remove the custom status line and return to Claude Code defaults:
    rm ~/.claude/statusline-with-tokens.sh
    ```
 
-3. **Remove cache files** (optional):
+3. **Remove leftovers from versions ≤ 1.4.0** (optional):
    ```bash
-   rm ~/.claude/.token-cache-*
+   rm -f ~/.claude/.token-cache-* ~/.claude/statusline-debug.json
    ```
 
 4. **Restart Claude Code**
@@ -265,19 +268,24 @@ echo '{}' | ~/.claude/statusline-with-tokens.sh
 
 If this produces an error, the script may be corrupted. Re-download it.
 
-#### Token counter always shows 0
+#### Token counter missing
 
-This is normal for:
-- Brand new conversations (no tokens used yet)
-- When Claude Code hasn't provided token data yet
+The token part is hidden until Claude Code sends `context_window` data:
+- Brand new conversations show it after the first response
+- Claude Code older than 2.1.6 never sends it - update Claude Code
 
-After a few exchanges, the counter should update. If it persists:
-1. Check `jq` is installed: `which jq`
-2. Verify script permissions: `ls -l ~/.claude/statusline-with-tokens.sh`
+If it persists, check `jq` is installed (`which jq`) and the script is executable.
 
-#### Multiple windows show same count (pre-v1.0.0)
+#### Session/Week limits missing
 
-Upgrade to v1.0.0 or later - this issue was fixed with session-based caching.
+`rate_limits` is only sent for Pro/Max subscriptions, and only after the first API response in a session. API-key users won't see it.
+
+#### Upgrading from ≤ 1.4.0
+
+Old versions left per-session cache files behind. Safe to delete:
+```bash
+rm -f ~/.claude/.token-cache-* ~/.claude/statusline-debug.json
+```
 
 ### Getting Help
 
@@ -311,20 +319,11 @@ If you want to install the script elsewhere:
 
 ### Customizing Display
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details on customizing:
-- Token threshold percentages
-- Display format
-- Color codes
-- Visual indicators
+Variables at the top of the script:
+- `AUTOCOMPACT_BUFFER` / `AUTOCOMPACT_BUFFER_MANUAL` - auto-compact buffer
+- `RATE_LIMIT_WARN_PCT` - when session/week limits get a `⚠`
 
-## Next Steps
-
-After installation:
-
-1. Test with multiple Claude Code windows to see per-window tracking
-2. Monitor your token usage across conversations
-3. Customize the script to your preferences (optional)
-4. Star the repository if you find it useful!
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Support
 

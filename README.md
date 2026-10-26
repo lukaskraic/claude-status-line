@@ -1,53 +1,49 @@
 # Claude Code Status Line with Token Counter
 
-Beautiful, informative status line for Claude Code with per-window token tracking.
+Status line for Claude Code showing context usage against the auto-compact limit, plus your account's session and weekly rate limits.
 
 ## Features
 
-- ✅ **Per-Window Token Tracking**: Each Claude Code window maintains its own independent token counter
-- ✅ **Visual Indicators**:
-  - ✓ Safe (0-74% usage)
-  - ⚠ Warning (75-89% usage)
-  - ⚠⚠ Critical (90-100% usage, auto-compact imminent)
-- ✅ **Intelligent Fallbacks**: Automatically tries JSON → transcript → cache for maximum reliability
-- ✅ **Git Integration**: Shows current branch when in a git repository
-- ✅ **Compact Display**: Human-readable format (45k instead of 45000)
-- ✅ **Model Display**: Shows which Claude model you're using
-- ✅ **Session Persistence**: Token count survives temporary data unavailability
+- **Context usage** measured against the point where auto-compact fires, not the raw window
+- **Visual indicators**: ✓ safe (0-74%), ⚠ warning (75-89%), ⚠⚠ critical (90-100%)
+- **Session limit**: 5-hour rate-limit usage in % with countdown to reset
+- **Week limit**: 7-day rate-limit usage in %
+- **Git branch**, **model name**, **current directory**
+- Works with any window size (200k, 1M) — read straight from Claude Code, no guessing
 
 ## Demo
 
 ```
-Format: ~/directory (branch) [Model Name] ✓ XXk/YYYk (ZZ%) · Session S% (reset 1h23m) · Week W%
+Format: ~/directory (branch) [Model] ✓ XXk/YYYk (ZZ%) · Session S% (reset 1h23m) · Week W%
 
-Examples:
 ~/Work/myproject (main) [Opus 5] ✓ 139k/967k (14%) · Session 14% (reset 2h05m) · Week 9%
 ~/Documents (develop) [Sonnet 5] ⚠ 140k/167k (84%) · Session ⚠86% (reset 42m) · Week 31%
-
-Session = 5-hour rate-limit window, Week = 7-day window (Pro/Max only, hidden for API keys).
+~/scripts [Haiku 5] ⚠⚠ 155k/167k (93%)
 ```
+
+The last line is an API-key user: rate limits only exist on Pro/Max subscriptions, so that part is hidden.
 
 ## Quick Install
 
 ### Prerequisites
 
-- [Claude Code](https://code.claude.com) installed
-- `jq` installed:
+- [Claude Code](https://code.claude.com) 2.1.6 or newer (rate limits need a recent 2.1.x release)
+- `jq`:
   ```bash
-  brew install jq  # macOS
-  sudo apt install jq  # Linux
+  brew install jq       # macOS
+  sudo apt install jq   # Linux
   ```
 
 ### Installation
 
-1. **Download and install the script**:
+1. **Download the script**:
    ```bash
    curl -o ~/.claude/statusline-with-tokens.sh \
      https://raw.githubusercontent.com/lukaskraic/claude-status-line/main/statusline-with-tokens.sh
    chmod +x ~/.claude/statusline-with-tokens.sh
    ```
 
-2. **Update Claude Code settings** (`~/.claude/settings.json`):
+2. **Point Claude Code at it** (`~/.claude/settings.json`):
    ```json
    {
      "statusLine": {
@@ -57,162 +53,84 @@ Session = 5-hour rate-limit window, Week = 7-day window (Pro/Max only, hidden fo
    }
    ```
 
-3. **Restart Claude Code** or start a new conversation
+3. **Restart Claude Code** or start a new conversation.
 
-That's it! Your status line will now show token usage for each window independently.
+See [INSTALL.md](INSTALL.md) for more options and verification steps.
 
 ## How It Works
 
-The status line script:
+Claude Code pipes a JSON payload to the script on every status line refresh. The script reads it in a single `jq` pass:
 
-1. **Receives JSON input** from Claude Code with session metadata
-2. **Parses transcript file** to extract token usage (Claude Code API doesn't provide token counts)
-3. **Calculates accurate total**:
-   - Formula: `cache_read_tokens + cache_creation_tokens + autocompact_buffer (45k)`
-   - The autocompact buffer is a constant 45k tokens reserved by Claude Code 2.0+
-4. **Falls back intelligently**:
-   - Primary: Parse transcript file
-   - Secondary: Read from cache file
-5. **Uses per-window cache**: Each session gets `~/.claude/.token-cache-{session_id}`
-6. **Formats and displays**: directory, branch, model, tokens with visual indicators
+| Field | Used for |
+|-------|----------|
+| `context_window.total_input_tokens` | Tokens in context (fallbacks: `current_usage` sum, then `used_percentage`) |
+| `context_window.context_window_size` | Full window size |
+| `rate_limits.five_hour.used_percentage` / `resets_at` | Session % and time to reset |
+| `rate_limits.seven_day.used_percentage` | Week % |
+| `workspace.current_dir`, `model.display_name` | Directory, git branch, model |
 
-**Accuracy**: 99.2% match with `/context` output (typically within 1-2k tokens)
+### Context budget
 
-### Per-Window Isolation
+Claude Code reserves a fixed **33k** buffer of every window for the auto-compact summary; auto-compact fires at `window − buffer`. The script shows usage against that effective budget (e.g. 167k for a 200k window, 967k for 1M), which matches what `/context` reports.
 
-Each window gets a unique `session_id` from Claude Code, ensuring completely independent token tracking. You can have multiple windows open with different conversations, and each will track its own token usage.
+### Rate limits
 
-### Visual Indicators
-
-The status indicator helps you quickly assess context usage:
-
-| Indicator | Usage | Meaning |
-|-----------|-------|---------|
-| ✓ | 0-74% | Safe - plenty of context remaining |
-| ⚠ | 75-89% | Warning - approaching auto-compact |
-| ⚠⚠ | 90-100% | Critical - auto-compact imminent (~92%) |
+- **Session** — 5-hour rolling window. `(reset 2h05m)` is the time until it resets; it's hidden once the reset time has passed and the payload hasn't been refreshed yet.
+- **Week** — 7-day window.
+- Values ≥ 80% get a `⚠` prefix.
+- The countdown is recalculated whenever Claude Code redraws the status line.
 
 ## Configuration
 
-The script automatically detects and displays:
+Edit the variables at the top of `statusline-with-tokens.sh`:
 
-- **Current directory**: With `~` expansion for home directory
-- **Git branch**: Shown in parentheses when in a git repository
-- **Model name**: The Claude model you're currently using
-- **Token usage**: Current usage / budget limit (percentage)
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `AUTOCOMPACT_BUFFER` | `33000` | Reserved auto-compact buffer |
+| `AUTOCOMPACT_BUFFER_MANUAL` | unset | Hard override of the buffer |
+| `RATE_LIMIT_WARN_PCT` | `80` | Threshold for the `⚠` on session/week limits |
 
-### System Overhead
+The buffer is also derived automatically from your Claude Code settings, in this order:
 
-The script automatically detects system overhead based on your MCP configuration using a multi-location fallback mechanism.
+1. `AUTOCOMPACT_BUFFER_MANUAL`
+2. `CLAUDE_CODE_AUTO_COMPACT_WINDOW` env var (e.g. `500k`)
+3. `autoCompactWindow` in `~/.claude/settings.json` (`500000`, `500k`, `1m`)
+4. `autoCompactEnabled: false` in `~/.claude/settings.json` → no buffer, full window
+5. `AUTOCOMPACT_BUFFER`
 
-**Auto-detection** (default):
-- Reads MCP configuration from multiple locations (in fallback order):
-  1. `~/.claude.json` (Claude Code CLI config - most common)
-  2. `~/.claude/settings.json` (project-specific)
-  3. `~/Library/Application Support/Claude/claude_desktop_config.json` (Claude Desktop)
-- Estimates overhead based on **enabled** MCP server count:
-  - **0 servers**: 24k (base: system prompt + tools + agents + memory)
-  - **1-2 servers**: 34k (base + minimal MCP overhead)
-  - **3-4 servers**: 54k (base + moderate MCP overhead)
-  - **5-6 servers**: 74k (base + high MCP overhead)
-  - **7+ servers**: 104k (base + maximum MCP overhead)
-- Handles disabled servers correctly (excludes them from count)
-- Graceful fallbacks if config files are missing or malformed
-- **Dynamic detection**: Updates automatically when MCP servers are disabled/enabled (no restart needed)
-
-**Autocompact Buffer**:
-- Claude Code 2.0+ reserves a constant **45k tokens (22.5%)** for autocompact operations
-- This buffer is always present and persists even after `/clear` command
-- The script automatically adds this buffer to match `/context` output
-- Reference: [GitHub Issue #10266](https://github.com/anthropics/claude-code/issues/10266)
-
-**Manual override** (optional):
-
-If auto-detection doesn't match your `/context` output, you can manually override:
-
-```bash
-# Edit ~/.claude/statusline-with-tokens.sh
-# Uncomment and set your custom value:
-SYSTEM_OVERHEAD_MANUAL=35000
-```
-
-**How to calibrate:**
-1. Run `/context` in Claude Code
-2. Note the total tokens shown (e.g., "162k/200k")
-3. Compare with your status line
-4. If they differ, set `SYSTEM_OVERHEAD_MANUAL` to fine-tune (adjust by ±5-10k)
-
-**After `/clear` command:**
-- Status line shows system overhead + autocompact buffer as minimum (instead of 0k)
-- This matches `/context` behavior which always includes system components + 45k buffer
-- As soon as you send a new message, the count updates to include conversation tokens
-
-### Customization
-
-You can modify the script to customize:
-
-- System overhead detection (see `detect_mcp_servers()` function or use `SYSTEM_OVERHEAD_MANUAL`)
-- Threshold percentages for visual indicators
-- Display format
-- Token formatting
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ## Troubleshooting
 
-### Token counter shows 0
+- **Only `[Model]` shown, no tokens** — Claude Code is older than 2.1.6 (no `context_window` in payload) or no message has been sent yet. Update Claude Code.
+- **No Session/Week** — you're on an API key, or no API response has arrived yet in this session.
+- **Status line empty** — check `jq` is installed and the script is executable.
 
-The script has a 3-tier fallback system. If you see 0:
-- Check that `jq` is installed: `which jq`
-- Verify the script is executable: `ls -l ~/.claude/statusline-with-tokens.sh`
-- Check Claude Code logs for errors
-
-### Status line not updating
-
-- Restart Claude Code
-- Check that `settings.json` points to the correct script path
-- Verify the script runs: `echo '{}' | ~/.claude/statusline-with-tokens.sh`
-
-### jq not found
-
-Install `jq`:
+Test manually:
 ```bash
-brew install jq  # macOS
-sudo apt install jq  # Linux
+echo '{"workspace":{"current_dir":"'"$PWD"'"},"model":{"display_name":"Test"},"context_window":{"context_window_size":200000,"total_input_tokens":45000},"rate_limits":{"five_hour":{"used_percentage":14,"resets_at":'$(( $(date +%s) + 7500 ))'},"seven_day":{"used_percentage":9}}}' \
+  | ~/.claude/statusline-with-tokens.sh
+# ~/current/dir (branch) [Test] ✓ 45k/167k (27%) · Session 14% (reset 2h05m) · Week 9%
 ```
 
-### Multiple windows show same count
-
-This was fixed in v1.0.0 with session-based caching. Make sure you have the latest version:
-```bash
-curl -o ~/.claude/statusline-with-tokens.sh \
-  https://raw.githubusercontent.com/lukaskraic/claude-status-line/main/statusline-with-tokens.sh
-chmod +x ~/.claude/statusline-with-tokens.sh
-```
-
-For more issues, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+More in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Documentation
 
-- [Installation Guide](INSTALL.md) - Detailed installation instructions
-- [Architecture](docs/ARCHITECTURE.md) - Technical implementation details
-- [Troubleshooting](docs/TROUBLESHOOTING.md) - Common issues and solutions
-- [Changelog](CHANGELOG.md) - Version history
+- [Installation Guide](INSTALL.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Output Examples](docs/examples/output-examples.txt)
+- [Changelog](CHANGELOG.md)
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit issues or pull requests.
+Issues and pull requests are welcome.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE).
 
 ## Author
 
 **Lukas Kraic** - [GitHub](https://github.com/lukaskraic)
-
-## Acknowledgments
-
-- Built for [Claude Code](https://code.claude.com)
-- Inspired by the need for better context window visibility
-- Uses `jq` for JSON parsing

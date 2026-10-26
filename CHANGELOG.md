@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Token usage read from `context_window` in the status line payload (Claude Code 2.1.6+) instead of transcript parsing
 - Budget is the real window minus the auto-compact buffer (33k) instead of a hardcoded 200k
+- Docs (README, INSTALL, ARCHITECTURE, TROUBLESHOOTING, output examples) rewritten for the payload-based design
 
 ### Removed
 - MCP-count overhead heuristic, per-session token cache files, debug payload dump

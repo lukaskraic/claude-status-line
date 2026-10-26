@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Account rate limits always shown: `Session X% (reset 2h05m) · Week Y%` (Pro/Max only), `⚠` from 80%
+
+### Changed
+- Token usage read from `context_window` in the status line payload (Claude Code 2.1.6+) instead of transcript parsing
+- Budget is the real window minus the auto-compact buffer (33k) instead of a hardcoded 200k
+
+### Removed
+- MCP-count overhead heuristic, per-session token cache files, debug payload dump
+
 ## [1.4.0] - 2024-12-04
 
 ### Fixed

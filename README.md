@@ -18,12 +18,13 @@ Beautiful, informative status line for Claude Code with per-window token trackin
 ## Demo
 
 ```
-Format: ~/directory (branch) [Model Name] ✓ XXk/YYYk (ZZ%)
+Format: ~/directory (branch) [Model Name] ✓ XXk/YYYk (ZZ%) · Session S% (reset 1h23m) · Week W%
 
 Examples:
-~/Work/myproject (main) [Claude Sonnet 4.5] ✓ 45k/200k (22%)
-~/Documents (develop) [Claude Haiku 4.5] ⚠ 140k/200k (70%)
-~/.claude [Claude Opus 4.5] ⚠⚠ 180k/200k (90%)
+~/Work/myproject (main) [Opus 5] ✓ 139k/967k (14%) · Session 14% (reset 2h05m) · Week 9%
+~/Documents (develop) [Sonnet 5] ⚠ 140k/167k (84%) · Session ⚠86% (reset 42m) · Week 31%
+
+Session = 5-hour rate-limit window, Week = 7-day window (Pro/Max only, hidden for API keys).
 ```
 
 ## Quick Install
